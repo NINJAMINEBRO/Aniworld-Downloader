@@ -248,10 +248,11 @@ def download_and_convert_hls_stream(hls_url, file_name):
     current_downloads.remove(file_name)
     if len(current_downloads) == 1 and shutdown:
         os.system('shutdown -s')
+    downloads_list.destroy()
     downloads_list = tk.OptionMenu(root, downloads, *current_downloads)
     downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
     downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    downloads_list.grid(row=101, column=0, sticky="w", padx=13)
+    downloads_list.grid(row=91, column=0, sticky="w", padx=13)
 
 
 def download(link, file_name):
@@ -279,10 +280,11 @@ def download(link, file_name):
     current_downloads.remove(file_name)
     if len(current_downloads) == 1 and shutdown:
         os.system('shutdown -s')
+    downloads_list.destroy()
     downloads_list = tk.OptionMenu(root, downloads, *current_downloads)
     downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
     downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    downloads_list.grid(row=101, column=0, sticky="w", padx=13)
+    downloads_list.grid(row=91, column=0, sticky="w", padx=13)
 
 
 def remove_file(path):
@@ -336,11 +338,13 @@ bg_2nd = "#637CF9"
 fg = "#FFFFFF"
 episodes = []
 seasons = 0
+movies = 0
 current_downloads = ["Current Downloads"]
+types = ["Episodes", "Movies"]
 shutdown = False
 languages = ["German", "Ger-Sub", "Eng-Sub"]
 
-version = 1.00
+version = 0.90
 latest_version = get_latest_version()
 root = tk.Tk()
 root.title("Aniworld Downloader")
@@ -373,28 +377,48 @@ def focus_out():
 
 
 def confirm_link(link):
-    global seasons, episodes, url
+    global seasons, episodes, url, movies
+    seasons, movies = 0, 0
     link = link_validator(link)
     url = link
     if link:
-        seasons = get_season(link)
+        if typev.get() == "Episodes":
+            seasons = get_season(link)
+        elif typev.get() == "Movies":
+            movies = get_movies(link)
         if seasons != 0:
             episodes = []
             for i in range(seasons):
                 episodes.append(get_episodes(link, i+1))
             build_menu_2(link[link.index("stream/")+7:-1].replace("-", " ").upper())
+        elif movies != 0:
+            build_menu_2(link[link.index("stream/")+7:-1].replace("-", " ").upper())
         else:
-            print("Anime not found")
+            print("Anime/Series not found")
     else:
         print("That Link is invalid")
 
 
 def link_validator(link):
-    if "https://aniworld.to/" in link:
+    if "https://aniworld.to/" in link or "https://s.to/" in link:
         if link[-1] != "/":
             link += "/"
         return link
     return False
+
+
+def get_movies(url_path):
+    logger.debug("Entered get_movies")
+    url = "{}filme/".format(url_path)
+    movie_count = 1
+    html_page = urllib.request.urlopen(url, timeout=50)
+    soup = BeautifulSoup(html_page, features="html.parser")
+    for link in soup.findAll('a'):
+        movie = str(link.get("href"))
+        if "/filme/film-{}".format(movie_count) in movie:
+            movie_count = movie_count + 1
+    logger.debug("Now leaving Function get_movies")
+    return movie_count - 1
 
 
 def get_season(url_path):
@@ -504,6 +528,26 @@ def to_episode():
         episode_start.set("Episode: " + str(from_episodev))
 
 
+def from_movie():
+    global movie_start, movie_end
+    from_moviev = movie_start.get()[7:]
+    to_moviev = movie_end.get()[7:]
+
+    if from_moviev > to_moviev:
+        to_moviev = from_moviev
+        movie_end.set("Movie: " + str(to_moviev))
+
+
+def to_movie():
+    global movie_start, movie_end
+    from_moviev = movie_start.get()[7:]
+    to_moviev = movie_end.get()[7:]
+
+    if from_moviev > to_moviev:
+        from_moviev = to_moviev
+        movie_start.set("Movie: " + str(from_moviev))
+
+
 def shutdown_setting():
     global shutdown
     if shutdown:
@@ -550,7 +594,7 @@ def create_new_download_thread(url, file_name, provider) -> Thread:
 
 def create_download_thread():
     global providerv, url, episodes
-    global season_start, season_end, episode_start, episode_end
+    global season_start, season_end, episode_start, episode_end, movie_start, movie_end
     trys = 0
     limit = len(languages)
     lang = language_prio_1.get()
@@ -558,115 +602,152 @@ def create_download_thread():
         try:
             trys += 1
             type_of_media = parse_cli_arguments("anime", 1)
+            if "https://s.to" in url:
+                type_of_media = parse_cli_arguments("series", 1)
             if lang == "Eng-Sub":
                 lang = "English"
             language = parse_cli_arguments(lang, 3)  # language to download with
             dlMode = parse_cli_arguments("Series", 4)  # Options: Movies, Series, All
+            if movies != 0:
+                dlMode = parse_cli_arguments("Movies", 4)
             provider = parse_cli_arguments(providerv.get(), 6)  # provider
             name = parse_cli_arguments(url[url.index("stream/")+7:-1], 2)  # anime name like in the link
             url = "{}/{}/stream/{}/".format(site_url[type_of_media], type_of_media, name)
             if name not in os.listdir():  # create anime folder if name not exist
                 os.mkdir(name)
 
-            # last episode last season not implemented
-            starting_season = int(season_start.get()[8:])
-            starting_episode = int(episode_start.get()[9:])-1
-            last_season = int(season_end.get()[8:])
-            last_episode = int(episode_end.get()[9:])
-
             queue = []
-            for i in range(last_season-starting_season+1):
-                if "Season "+str(starting_season+i) not in os.listdir(name):  # create season folder
-                    os.mkdir(name+"/Season "+str(starting_season+i))
-                eps = episodes[i+starting_season-1]-starting_episode
-                if i+starting_season == last_season:
-                    eps -= (episodes[i+starting_season-1]-last_episode)
-                for x in range(eps):
-                    queue.append("S{}E{}".format(i+starting_season, x+starting_episode+1))
-                starting_episode = 0
-            for i in range(len(queue)):  # range season left
-                season_override = parse_cli_arguments(queue[i][1:queue[i].index("E")], 5)  # season to download
-                episode_override = queue[i][queue[i].index("E")+1:]
-                link = url + "staffel-{}/episode-{}".format(season_override, episode_override)
-                redirect_link, provider = get_redirect_link_by_provider(site_url[type_of_media], link, language, provider)
-                cache_url = find_cache_url(redirect_link, provider)
-                file_name = "{}/Season {}/S{}-E{}-{}.mp4".format(name, season_override, season_override, episode_override, name)
-                if os.path.exists(file_name):
-                    logger.info("Episode {} already downloaded.".format(file_name))
-                else:
-                    logger.info("File not downloaded. Downloading: {}".format(file_name))
-                    create_new_download_thread(cache_url, file_name, provider)
-                    trys = len(languages)
+            if seasons > 0:
+                starting_season = int(season_start.get()[8:])
+                starting_episode = int(episode_start.get()[9:])-1
+                last_season = int(season_end.get()[8:])
+                last_episode = int(episode_end.get()[9:])
+
+                for i in range(last_season - starting_season + 1):
+                    if "Season " + str(starting_season + i) not in os.listdir(name):  # create season folder
+                        os.mkdir(name + "/Season " + str(starting_season + i))
+                    eps = episodes[i + starting_season - 1] - starting_episode
+                    if i + starting_season == last_season:
+                        eps -= (episodes[i + starting_season - 1] - last_episode)
+                    for x in range(eps):
+                        queue.append("S{}E{}".format(i + starting_season, x + starting_episode + 1))
+                    starting_episode = 0
+                for i in range(len(queue)):  # range season left
+                    season_override = parse_cli_arguments(queue[i][1:queue[i].index("E")], 5)  # season to download
+                    episode_override = queue[i][queue[i].index("E") + 1:]
+                    link = url + "staffel-{}/episode-{}".format(season_override, episode_override)
+                    redirect_link, provider = get_redirect_link_by_provider(site_url[type_of_media], link, language, provider)
+                    cache_url = find_cache_url(redirect_link, provider)
+                    file_name = "{}/Season {}/S{}-E{}-{}.mp4".format(name, season_override, season_override, episode_override, name)
+                    if os.path.exists(file_name):
+                        logger.info("Episode {} already downloaded.".format(file_name))
+                    else:
+                        logger.info("File not downloaded. Downloading: {}".format(file_name))
+                        create_new_download_thread(cache_url, file_name, provider)
+                        trys = len(languages)
+
+            elif movies > 0:
+                starting_movie = int(movie_start.get()[7:])
+                last_movie = int(movie_end.get()[7:])
+                if "Movies" not in os.listdir(name):  # create season folder
+                    os.mkdir(name + "/Movies")
+                for i in range(starting_movie-last_movie+1):
+                    link = url + "filme/film-{}".format(i+starting_movie)
+                    redirect_link, provider = get_redirect_link_by_provider(site_url[type_of_media], link, language, provider)
+                    cache_url = find_cache_url(redirect_link, provider)
+                    file_name = "{}/Movies/Movie {}-{}.mp4".format(name, i+starting_movie, name)
+                    if os.path.exists(file_name):
+                        logger.info("Episode {} already downloaded.".format(file_name))
+                    else:
+                        logger.info("File not downloaded. Downloading: {}".format(file_name))
+                        create_new_download_thread(cache_url, file_name, provider)
+                        trys = len(languages)
+
         except Exception as e:
             if trys == 1:
                 lang = language_prio_2.get()
             elif trys == 2:
                 lang = language_prio_3.get()
-    build_menu(True)
+    build_menu("Episodes" if seasons > 0 else "Movies")
 
 
 def build_menu_2(title):
-    global name_label, link_entry, confirm_button, downloads_list
+    global name_label, link_entry, confirm_button, downloads_list, type_menu, type_label
     global shutdown_button, create_thread_button
     global provider_menu, language_menu_1, language_menu_2, language_menu_3
     global series_name_label, start_label, end_label, provider_label, options_label, language_label
-    global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu
-    global season_start, season_end, episode_start, episode_end
+    global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu, movie_start_menu, movie_end_menu
+    global season_start, season_end, episode_start, episode_end, movie_start, movie_end
     global providerv, language_prio_1, language_prio_2, language_prio_3
     name_label.destroy()
     link_entry.destroy()
     confirm_button.destroy()
     downloads_list.destroy()
+    type_menu.destroy()
+    type_label.destroy()
     if version < latest_version:
         update_button.destroy()
 
-    seasonsv = ["Season: " + str(i+1) for i in range(seasons)]
-    episodesv = ["Episode: " + str(i+1) for i in range(episodes[0])]
-
-    season_start = tk.StringVar()
-    season_start.set(seasonsv[0])
-    season_end = tk.StringVar()
-    season_end.set(seasonsv[0])
-
-    episode_start = tk.StringVar()
-    episode_start.set(episodesv[0])
-    episode_end = tk.StringVar()
-    episode_end.set(episodesv[-1])
-
     series_name_label = tk.Label(root, text=title, font=("Open Sans", 30), fg=bg_2nd, bg=bg)
     series_name_label.grid(row=0, column=0)
+
+    if seasons != 0:
+        seasonsv = ["Season: " + str(i+1) for i in range(seasons)]
+        episodesv = ["Episode: " + str(i+1) for i in range(episodes[0])]
+        season_start = tk.StringVar()
+        season_start.set(seasonsv[0])
+        season_end = tk.StringVar()
+        season_end.set(seasonsv[0])
+        episode_start = tk.StringVar()
+        episode_start.set(episodesv[0])
+        episode_end = tk.StringVar()
+        episode_end.set(episodesv[-1])
+
+        season_start_menu = tk.OptionMenu(root, season_start, *seasonsv, command=lambda x: from_season())
+        season_start_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
+        season_start_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        season_start_menu.grid(row=30, column=0, sticky="w", padx=30)
+        season_end_menu = tk.OptionMenu(root, season_end, *seasonsv, command=lambda x: to_season())
+        season_end_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
+        season_end_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        season_end_menu.grid(row=30, column=0, sticky="w", padx=187)
+
+        episode_start_menu = tk.OptionMenu(root, episode_start, *episodesv, command=lambda x: from_episode())
+        episode_start_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
+        episode_start_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        episode_start_menu.grid(row=35, column=0, sticky="w", padx=30)
+        episode_end_menu = tk.OptionMenu(root, episode_end, *episodesv, command=lambda x: to_episode())
+        episode_end_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
+        episode_end_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        episode_end_menu.grid(row=35, column=0, sticky="w", padx=187)
+
+    elif movies != 0:
+        moviesv = ["Movie: " + str(i+1) for i in range(movies)]
+        movie_start = tk.StringVar()
+        movie_start.set(moviesv[0])
+        movie_end = tk.StringVar()
+        movie_end.set(moviesv[-1])
+
+        movie_start_menu = tk.OptionMenu(root, movie_start, *moviesv, command=lambda x: from_movie())
+        movie_start_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
+        movie_start_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        movie_start_menu.grid(row=30, column=0, sticky="w", padx=30)
+        movie_end_menu = tk.OptionMenu(root, movie_end, *moviesv, command=lambda x: to_movie())
+        movie_end_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
+        movie_end_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        movie_end_menu.grid(row=30, column=0, sticky="w", padx=187)
 
     start_label = tk.Label(root, text="Start from", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=11)
     start_label.grid(row=25, column=0, sticky="w", padx=30, ipadx=2)
     end_label = tk.Label(root, text="End at", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=11)
     end_label.grid(row=25, column=0, sticky="w", padx=60+127, ipadx=2)
 
-    season_start_menu = tk.OptionMenu(root, season_start, *seasonsv, command=lambda x: from_season())
-    season_start_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
-    season_start_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    season_start_menu.grid(row=30, column=0, sticky="w", padx=30)
-
-    season_end_menu = tk.OptionMenu(root, season_end, *seasonsv, command=lambda x: to_season())
-    season_end_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
-    season_end_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    season_end_menu.grid(row=30, column=0, sticky="w", padx=187)
-
-    episode_start_menu = tk.OptionMenu(root, episode_start, *episodesv, command=lambda x: from_episode())
-    episode_start_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
-    episode_start_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    episode_start_menu.grid(row=35, column=0, sticky="w", padx=30)
-
-    episode_end_menu = tk.OptionMenu(root, episode_end, *episodesv, command=lambda x: to_episode())
-    episode_end_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
-    episode_end_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    episode_end_menu.grid(row=35, column=0, sticky="w", padx=187)
-
     provider_label = tk.Label(root, text="Provider", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=15)
     provider_label.grid(row=25, column=0, sticky="w", padx=217+end_label.winfo_reqwidth())
 
     providerv = tk.StringVar()
-    providerv.set("Streamtape")
-    providers = ["Streamtape", "Vidoza", "VOE"]
+    providerv.set("VOE")
+    providers = ["VOE", "Vidoza", "Streamtape"]
     provider_menu = tk.OptionMenu(root, providerv, *providers)
     provider_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=15)
     provider_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
@@ -707,12 +788,20 @@ def build_menu_2(title):
 
 
 def build_menu(*args):
-    global link_entry, confirm_button, downloads_list, name_label, downloads, update_button
+    global link_entry, confirm_button, downloads_list, name_label, downloads, update_button, type_menu, type_label, typev
     global shutdown_button, create_thread_button
     global provider_menu, language_menu_1, language_menu_2, language_menu_3, language_menu_4
     global series_name_label, start_label, end_label, provider_label, options_label, language_label
-    global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu
+    global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu, movie_start_menu, movie_end_menu
     if args:
+        if "Episodes" in args:
+            season_start_menu.destroy()
+            season_end_menu.destroy()
+            episode_start_menu.destroy()
+            episode_end_menu.destroy()
+        elif "Movies" in args:
+            movie_start_menu.destroy()
+            movie_end_menu.destroy()
         shutdown_button.destroy()
         create_thread_button.destroy()
         provider_menu.destroy()
@@ -721,16 +810,12 @@ def build_menu(*args):
         end_label.destroy()
         provider_label.destroy()
         options_label.destroy()
-        season_start_menu.destroy()
-        season_end_menu.destroy()
-        episode_start_menu.destroy()
-        episode_end_menu.destroy()
         language_menu_1.destroy()
         language_menu_2.destroy()
         language_menu_3.destroy()
         language_label.destroy()
     link_entry = tk.Entry(root, width=70, bg=bg_2nd, fg=fg, font=("Open Sans", 15))
-    link_entry.grid(row=100, column=0, ipady=10)
+    link_entry.grid(row=90, column=0, ipady=10)
     link_entry.insert(0, "Link: ")
     link_entry.bind("<FocusIn>", lambda x: entry_focus_in(link_entry))
     link_entry.bind("<FocusOut>", lambda x: entry_focus_out(link_entry))
@@ -738,15 +823,25 @@ def build_menu(*args):
     name_label = tk.Label(root, text="ANIWORLD DOWNLOADER", bg=bg, fg=bg_2nd, font=("Open Sans", 30))
     name_label.grid(row=0, column=0)
 
+    type_label = tk.Label(root, text="Type", bg=bg, fg=bg_2nd, font=("Open Sans", 15), width=8)
+    type_label.grid(row=83, column=0, sticky="w", padx=13)
+
+    typev = tk.StringVar()
+    typev.set("Episodes")
+    type_menu = tk.OptionMenu(root, typev, *types)
+    type_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=8)
+    type_menu["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+    type_menu.grid(row=88, column=0, sticky="w", padx=13)
+
     confirm_button = tk.Button(root, text="Confirm", bg=bg_2nd, width=10, border=0, fg=fg, height=1, font=("Open Sans", 15), command=lambda: confirm_link(link_entry.get()))
-    confirm_button.grid(row=101, column=0)
+    confirm_button.grid(row=91, column=0)
 
     downloads = tk.StringVar()
     downloads.set("Current Downloads")
     downloads_list = tk.OptionMenu(root, downloads, *current_downloads)
     downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
     downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    downloads_list.grid(row=101, column=0, sticky="w", padx=13)
+    downloads_list.grid(row=91, column=0, sticky="w", padx=13)
 
     logo_label = tk.Label(root, width=12, height=1, text="Made by NMB", bg=bg, fg="#8EA1BD", font=("Open Sans", 15))
     logo_label.grid(row=201, column=0, sticky="w", padx=6)
