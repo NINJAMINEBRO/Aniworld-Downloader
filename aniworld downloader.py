@@ -344,7 +344,7 @@ types = ["Episodes", "Movies"]
 shutdown = False
 languages = ["German", "Ger-Sub", "Eng-Sub"]
 
-version = 0.90
+version = 1.00
 latest_version = get_latest_version()
 root = tk.Tk()
 root.title("Aniworld Downloader")
@@ -400,7 +400,7 @@ def confirm_link(link):
 
 
 def link_validator(link):
-    if "https://aniworld.to/" in link or "https://s.to/" in link:
+    if "https://aniworld.to/" in link or "https://s.to/" in link or "https://bs.to/" in link:
         if link[-1] != "/":
             link += "/"
         return link
@@ -558,6 +558,10 @@ def shutdown_setting():
         shutdown_button["fg"] = bg
 
 
+def return_menu():
+    build_menu("Episodes" if seasons > 0 else "Movies")
+
+
 def language_prio_set(set_b):
     lang_1 = language_prio_1.get()
     lang_2 = language_prio_2.get()
@@ -601,9 +605,10 @@ def create_download_thread():
     while trys < limit:
         try:
             trys += 1
-            type_of_media = parse_cli_arguments("anime", 1)
-            if "https://s.to" in url:
-                type_of_media = parse_cli_arguments("series", 1)
+            if "aniworld.to" in url:
+                type_of_media = parse_cli_arguments("anime", 1)
+            elif "s.to" in url:
+                type_of_media = parse_cli_arguments("serie", 1)
             if lang == "Eng-Sub":
                 lang = "English"
             language = parse_cli_arguments(lang, 3)  # language to download with
@@ -632,6 +637,7 @@ def create_download_thread():
                     for x in range(eps):
                         queue.append("S{}E{}".format(i + starting_season, x + starting_episode + 1))
                     starting_episode = 0
+                print("set episodes list")
                 for i in range(len(queue)):  # range season left
                     season_override = parse_cli_arguments(queue[i][1:queue[i].index("E")], 5)  # season to download
                     episode_override = queue[i][queue[i].index("E") + 1:]
@@ -639,6 +645,7 @@ def create_download_thread():
                     redirect_link, provider = get_redirect_link_by_provider(site_url[type_of_media], link, language, provider)
                     cache_url = find_cache_url(redirect_link, provider)
                     file_name = "{}/Season {}/S{}-E{}-{}.mp4".format(name, season_override, season_override, episode_override, name)
+                    print("about to download")
                     if os.path.exists(file_name):
                         logger.info("Episode {} already downloaded.".format(file_name))
                     else:
@@ -673,7 +680,7 @@ def create_download_thread():
 
 def build_menu_2(title):
     global name_label, link_entry, confirm_button, downloads_list, type_menu, type_label
-    global shutdown_button, create_thread_button
+    global shutdown_button, create_thread_button, return_button
     global provider_menu, language_menu_1, language_menu_2, language_menu_3
     global series_name_label, start_label, end_label, provider_label, options_label, language_label
     global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu, movie_start_menu, movie_end_menu
@@ -764,6 +771,9 @@ def build_menu_2(title):
     language_label = tk.Label(root, text="Language\npriority", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=12, bd=False, height=2)
     language_label.grid(row=20, column=0, sticky="e", padx=30, rowspan=6)
 
+    return_button = tk.Button(root, text="←", font=("Open Sans", 25), fg=bg_2nd, bg=bg, width=3, bd=False, height=1, command=lambda: return_menu())
+    return_button.grid(row=0, column=0, sticky="w")
+
     language_prio_1 = tk.StringVar()
     language_prio_2 = tk.StringVar()
     language_prio_3 = tk.StringVar()
@@ -789,7 +799,7 @@ def build_menu_2(title):
 
 def build_menu(*args):
     global link_entry, confirm_button, downloads_list, name_label, downloads, update_button, type_menu, type_label, typev
-    global shutdown_button, create_thread_button
+    global shutdown_button, create_thread_button, return_button
     global provider_menu, language_menu_1, language_menu_2, language_menu_3, language_menu_4
     global series_name_label, start_label, end_label, provider_label, options_label, language_label
     global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu, movie_start_menu, movie_end_menu
@@ -814,6 +824,7 @@ def build_menu(*args):
         language_menu_2.destroy()
         language_menu_3.destroy()
         language_label.destroy()
+        return_button.destroy()
     link_entry = tk.Entry(root, width=70, bg=bg_2nd, fg=fg, font=("Open Sans", 15))
     link_entry.grid(row=90, column=0, ipady=10)
     link_entry.insert(0, "Link: ")
