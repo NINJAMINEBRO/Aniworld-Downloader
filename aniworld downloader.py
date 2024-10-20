@@ -253,6 +253,9 @@ def download_and_convert_hls_stream(hls_url, file_name):
     downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
     downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
     downloads_list.grid(row=91, column=0, sticky="w", padx=13)
+    if pending_queue:
+        pending_queue[0].start()
+        pending_queue.pop(0)
 
 
 def download(link, file_name):
@@ -285,6 +288,9 @@ def download(link, file_name):
     downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
     downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
     downloads_list.grid(row=91, column=0, sticky="w", padx=13)
+    if pending_queue:
+        pending_queue[0].start()
+        pending_queue.pop(0)
 
 
 def remove_file(path):
@@ -297,17 +303,23 @@ def remove_file(path):
 
 
 def get_latest_version():  # get latest version
-    file = urllib.request.urlopen("https://raw.githubusercontent.com/NINJAMINEBRO/Aniworld-Downloader/main/version")
-    lines = ""
-    for line in file:
-        lines += line.decode("utf-8")
-    if float(lines[:-1]) > version:
+    try:
+        file = urllib.request.urlopen("https://raw.githubusercontent.com/NINJAMINEBRO/Aniworld-Downloader/main/version")
+        lines = ""
+        for line in file:
+            lines += line.decode("utf-8")
+        lines = float(lines[:-1])
+    except Exception as e:
+        if "urlopen error" in str(e):
+            logger.error("No Network connection")
+        lines = version
+    if lines > version:
         print(f"Update available\ncurrent version: {version}\nlatest version: {lines}Download latest version on: https://ninjaminebro.itch.io/aniworld-downloader\n")
-    return float(lines[:-1])
+    return lines
 
 
 def update():
-    http_response = urllib.request.urlopen("https://github.com/NINJAMINEBRO/Aniworld-Downloader/raw/main/Aniworld-Downloader.zip")
+    http_response = urllib.request.urlopen("https://github.com/NINJAMINEBRO/Aniworld-Downloader/raw/refs/heads/main/Aniworld%20Downloader.zip")
     zipfile = ZipFile(BytesIO(http_response.read()))
     try:
         os.rename(f"{os.getcwd()}\\Aniworld Downloader by NMB.exe", f"{os.getcwd()}\\Aniworld Downloader by NMB old.exe")
@@ -321,9 +333,9 @@ def update():
 
 if "ffmpeg.exe" not in os.listdir(os.getcwd()):
     print(f"WARNING: ffmpeg is not installed or not in this folder, VOE will not work unless ffmpeg is in the same folder as Aniworld-Downloader")
-if "Aniworld-Downloader by NMB old.exe" in os.listdir(os.getcwd()):
+if "Aniworld Downloader by NMB old.exe" in os.listdir(os.getcwd()):
     try:
-        os.remove(f"{os.getcwd()}\\Aniworld-Downloader by NMB old.exe")
+        os.remove(f"{os.getcwd()}\\Aniworld Downloader by NMB old.exe")
     except Exception as e:
         print(f"something went wrong\n{e}")
 
@@ -340,14 +352,16 @@ episodes = []
 seasons = 0
 movies = 0
 current_downloads = ["Current Downloads"]
+pending_queue = []
+active_queue_checker = False
 types = ["Episodes", "Movies"]
 shutdown = False
 languages = ["German", "Ger-Sub", "Eng-Sub"]
 
-version = 1.00
+version = 1.10
 latest_version = get_latest_version()
 root = tk.Tk()
-root.title("Aniworld Downloader")
+root.title("Aniworld Downloader by NMB")
 root.configure(bg=bg)
 root.resizable(False, False)
 root.geometry("800x500")
@@ -588,12 +602,15 @@ def create_new_download_thread(url, file_name, provider) -> Thread:
     t = None
     if provider in ["Vidoza", "Streamtape"]:
         t = Thread(target=download, args=(url, file_name))
-        t.start()
+        if len(current_downloads) < 10:
+            t.start()
     elif provider == "VOE":
         t = Thread(target=download_and_convert_hls_stream, args=(url, file_name))
-        t.start()
+        if len(current_downloads) < 10:
+            t.start()
     logger.loading("Provider {} - File {} added to queue.".format(provider, file_name))
-    return t
+    if len(current_downloads) >= 10:
+        return t
 
 
 def create_download_thread():
@@ -637,7 +654,6 @@ def create_download_thread():
                     for x in range(eps):
                         queue.append("S{}E{}".format(i + starting_season, x + starting_episode + 1))
                     starting_episode = 0
-                print("set episodes list")
                 for i in range(len(queue)):  # range season left
                     season_override = parse_cli_arguments(queue[i][1:queue[i].index("E")], 5)  # season to download
                     episode_override = queue[i][queue[i].index("E") + 1:]
@@ -645,12 +661,13 @@ def create_download_thread():
                     redirect_link, provider = get_redirect_link_by_provider(site_url[type_of_media], link, language, provider)
                     cache_url = find_cache_url(redirect_link, provider)
                     file_name = "{}/Season {}/S{}-E{}-{}.mp4".format(name, season_override, season_override, episode_override, name)
-                    print("about to download")
                     if os.path.exists(file_name):
                         logger.info("Episode {} already downloaded.".format(file_name))
                     else:
                         logger.info("File not downloaded. Downloading: {}".format(file_name))
-                        create_new_download_thread(cache_url, file_name, provider)
+                        r_t = create_new_download_thread(cache_url, file_name, provider)
+                        if r_t is not None:
+                            pending_queue.append(r_t)
                         trys = len(languages)
 
             elif movies > 0:
@@ -667,9 +684,10 @@ def create_download_thread():
                         logger.info("Episode {} already downloaded.".format(file_name))
                     else:
                         logger.info("File not downloaded. Downloading: {}".format(file_name))
-                        create_new_download_thread(cache_url, file_name, provider)
+                        r_t = create_new_download_thread(cache_url, file_name, provider)
+                        if r_t is not None:
+                            pending_queue.append(r_t)
                         trys = len(languages)
-
         except Exception as e:
             if trys == 1:
                 lang = language_prio_2.get()
@@ -797,7 +815,7 @@ def build_menu_2(title):
     create_thread_button.grid(row=150, column=0)
 
 
-def build_menu(*args):
+def build_menu(*args):  # ERROR/LAG HERE WHEN/AFTER BUILDING SCREEN DOENST UPDATE TILL DOWNLOADS < 10
     global link_entry, confirm_button, downloads_list, name_label, downloads, update_button, type_menu, type_label, typev
     global shutdown_button, create_thread_button, return_button
     global provider_menu, language_menu_1, language_menu_2, language_menu_3, language_menu_4
