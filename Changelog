@@ -1,3 +1,9 @@
+1.10
+added No Network Connection Warning
+changed simultaneous downloads to a maximum of 10
+fixed old version not getting deleted when updating
+fixed downloads crashing when downloading too many episodes simultaneous
+
 1.00
 added a back to first menu button
 added StreamSeries support
