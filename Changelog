@@ -1,3 +1,9 @@
+1.20
+added search feature, returns all titles that have userinput in them
+added to long link detection, deletes everything after name/
+added example link in link entry
+added website button, on press takes opens webbrowser with aniworld itch page
+
 1.10
 added No Network Connection Warning
 changed simultaneous downloads to a maximum of 10
