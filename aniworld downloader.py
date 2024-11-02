@@ -1,6 +1,7 @@
 import tkinter as tk
 import urllib.request
 from typing import Union
+
 from bs4 import BeautifulSoup
 from urllib.error import URLError
 import logging
@@ -14,6 +15,7 @@ import subprocess
 import platform
 from zipfile import ZipFile
 from io import BytesIO
+import webbrowser
 
 
 def setup_logger(name: str) -> logging.Logger:
@@ -303,6 +305,7 @@ def remove_file(path):
 
 
 def get_latest_version():  # get latest version
+    network = True
     try:
         file = urllib.request.urlopen("https://raw.githubusercontent.com/NINJAMINEBRO/Aniworld-Downloader/main/version")
         lines = ""
@@ -310,12 +313,39 @@ def get_latest_version():  # get latest version
             lines += line.decode("utf-8")
         lines = float(lines[:-1])
     except Exception as e:
+        network = False
         if "urlopen error" in str(e):
             logger.error("No Network connection")
         lines = version
     if lines > version:
-        print(f"Update available\ncurrent version: {version}\nlatest version: {lines}Download latest version on: https://ninjaminebro.itch.io/aniworld-downloader\n")
-    return lines
+        print(f"Update available\ncurrent version: {version}\nlatest version: {lines}\nDownload latest version on: https://ninjaminebro.itch.io/aniworld-downloader\n")
+    return lines, network
+
+
+def get_titles_dict():
+    try:
+        html_response = urllib.request.urlopen("https://aniworld.to/animes")
+        soup = BeautifulSoup(html_response, "html.parser")
+        matching_li_elements = str(soup.find_all("li", {"a data-alternative-title": ""})).split("</a></li>, <li><a ")
+        num = 0
+        index_list = []
+        for i in matching_li_elements:
+            if "data-alternative-title" not in i:
+                index_list.append(num)
+            num += 1
+        index_list.sort(reverse=True)
+        for i in index_list:
+            matching_li_elements.pop(i)
+        title_link_dict = {}
+        for i in range(len(matching_li_elements)):
+            matching_li_elements[i] = matching_li_elements[i][24:]
+        for i in matching_li_elements:
+            title_link_dict.update({i[i.index('" title') + 9:i.index(" Stream anschauen")] + "," + i[:i.index('"')]: i[i.index('href="') + 20: i.index('" title')]})
+        return title_link_dict
+    except Exception as e:
+        if "urlopen error" in str(e):
+            logger.error("Disabled Searchbar")
+        return {}
 
 
 def update():
@@ -358,8 +388,9 @@ types = ["Episodes", "Movies"]
 shutdown = False
 languages = ["German", "Ger-Sub", "Eng-Sub"]
 
-version = 1.10
-latest_version = get_latest_version()
+version = 1.20
+latest_version, network_status = get_latest_version()
+titles_dict = get_titles_dict()
 root = tk.Tk()
 root.title("Aniworld Downloader by NMB")
 root.configure(bg=bg)
@@ -373,14 +404,18 @@ root.columnconfigure(0, weight=1)
 
 def entry_focus_in(entry):
     text = entry.get()
-    if text == "Link: ":
+    if text == "Link: https://aniworld.to/anime/stream/monogatari":
         entry.delete(0, "end")
 
 
 def entry_focus_out(entry):
     text = entry.get()
     if not text:
-        entry.insert(0, "Link: ")
+        entry.insert(0, "Link: https://aniworld.to/anime/stream/monogatari")
+        try:
+            filtered_anime_list.destroy()
+        except Exception as e:
+            pass
 
 
 def focus_out():
@@ -388,6 +423,54 @@ def focus_out():
     widget = root.winfo_containing(x, y)
     if ".!entry" not in str(widget):
         root.focus()
+
+
+def get_event(event):
+    input_handler(event, link_entry)
+
+
+def input_handler(event, entry):
+    key = event.keycode
+    global filtered_anime_list
+    text = entry.get().lower()
+    if key == 8:
+        text = text[:-1]
+    else:
+        text += event.char
+    valid_titles = []
+    better_sorted_list = []
+    secondary_sorted_list = []
+    third_sorted_list = []
+    for i in titles_dict.keys():
+        if text in i.lower():
+            valid_titles.append(titles_dict.get(i))
+    for i in valid_titles:
+        if text.replace(" ", "-") in i:
+            if i.index(text.replace(" ", "-")) == 0:
+                better_sorted_list.append(i)
+            else:
+                secondary_sorted_list.append(i)
+        else:
+            third_sorted_list.append(i)
+    better_sorted_list += secondary_sorted_list + third_sorted_list
+
+    try:
+        filtered_anime_list.destroy()
+    except Exception as e:
+        pass
+    if better_sorted_list and text:
+        filtered_anime = tk.StringVar()
+        filtered_anime.set("Searchbar")
+        filtered_anime_list = tk.OptionMenu(root, filtered_anime, *better_sorted_list, command=lambda x: set_anime(filtered_anime, entry))
+        filtered_anime_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
+        filtered_anime_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        filtered_anime_list.place(x=14, y=10)
+
+
+def set_anime(anime, entry):
+    entry.delete(0, "end")
+    entry.insert(0, "https://aniworld.to/anime/stream/"+anime.get())
+    filtered_anime_list.destroy()
 
 
 def confirm_link(link):
@@ -417,7 +500,14 @@ def link_validator(link):
     if "https://aniworld.to/" in link or "https://s.to/" in link or "https://bs.to/" in link:
         if link[-1] != "/":
             link += "/"
-        return link
+        sub_link = link[33:]
+        if "s.to" in link:
+            sub_link = link[26:]
+        elif "bs.to" in link:
+            sub_link = link[20:]
+        sub_link = sub_link[:sub_link.index("/")]
+        sub_link = link[:link.index(sub_link)+len(sub_link)+1]
+        return sub_link
     return False
 
 
@@ -710,6 +800,11 @@ def build_menu_2(title):
     downloads_list.destroy()
     type_menu.destroy()
     type_label.destroy()
+    website_button.destroy()
+    try:
+        filtered_anime_list.destroy()
+    except Exception as e:
+        pass
     if version < latest_version:
         update_button.destroy()
 
@@ -817,7 +912,7 @@ def build_menu_2(title):
 
 def build_menu(*args):  # ERROR/LAG HERE WHEN/AFTER BUILDING SCREEN DOENST UPDATE TILL DOWNLOADS < 10
     global link_entry, confirm_button, downloads_list, name_label, downloads, update_button, type_menu, type_label, typev
-    global shutdown_button, create_thread_button, return_button
+    global shutdown_button, create_thread_button, return_button, website_button
     global provider_menu, language_menu_1, language_menu_2, language_menu_3, language_menu_4
     global series_name_label, start_label, end_label, provider_label, options_label, language_label
     global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu, movie_start_menu, movie_end_menu
@@ -845,9 +940,11 @@ def build_menu(*args):  # ERROR/LAG HERE WHEN/AFTER BUILDING SCREEN DOENST UPDAT
         return_button.destroy()
     link_entry = tk.Entry(root, width=70, bg=bg_2nd, fg=fg, font=("Open Sans", 15))
     link_entry.grid(row=90, column=0, ipady=10)
-    link_entry.insert(0, "Link: ")
+    link_entry.insert(0, "Link: https://aniworld.to/anime/stream/monogatari")
     link_entry.bind("<FocusIn>", lambda x: entry_focus_in(link_entry))
     link_entry.bind("<FocusOut>", lambda x: entry_focus_out(link_entry))
+    if network_status:
+        link_entry.bind("<Key>", get_event)
 
     name_label = tk.Label(root, text="ANIWORLD DOWNLOADER", bg=bg, fg=bg_2nd, font=("Open Sans", 30))
     name_label.grid(row=0, column=0)
@@ -871,6 +968,9 @@ def build_menu(*args):  # ERROR/LAG HERE WHEN/AFTER BUILDING SCREEN DOENST UPDAT
     downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
     downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
     downloads_list.grid(row=91, column=0, sticky="w", padx=13)
+
+    website_button = tk.Button(root, text="Itch", bg=bg_2nd, width=9, border=0, fg=fg, height=1, font=("Open Sans", 15), command=lambda: webbrowser.open("https://ninjaminebro.itch.io/aniworld-downloader"))
+    website_button.place(x=800-14-website_button.winfo_reqwidth(), y=6)
 
     logo_label = tk.Label(root, width=12, height=1, text="Made by NMB", bg=bg, fg="#8EA1BD", font=("Open Sans", 15))
     logo_label.grid(row=201, column=0, sticky="w", padx=6)
