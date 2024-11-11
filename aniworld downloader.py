@@ -1,7 +1,6 @@
 import tkinter as tk
 import urllib.request
 from typing import Union
-
 from bs4 import BeautifulSoup
 from urllib.error import URLError
 import logging
@@ -16,6 +15,7 @@ import platform
 from zipfile import ZipFile
 from io import BytesIO
 import webbrowser
+from urllib.parse import urlsplit, urlunsplit
 
 
 def setup_logger(name: str) -> logging.Logger:
@@ -157,8 +157,7 @@ def get_href_by_language(html_content, language, provider):
                                          f"{list(lang_key_mapping.keys())}"))
     # Find all <li> elements with the given data-lang-key value and h4=provider
     matching_li_elements = soup.find_all("li", {"data-lang-key": lang_key})
-    matching_li_element = next((li_element for li_element in matching_li_elements
-                                if li_element.find("h4").get_text() == provider), None)
+    matching_li_element = next((li_element for li_element in matching_li_elements if li_element.find("h4").get_text() == provider), None)
     # Check if any matching elements were found and return the corresponding href
     if matching_li_element:
         href = matching_li_element.get("data-link-target", "")
@@ -250,11 +249,12 @@ def download_and_convert_hls_stream(hls_url, file_name):
     current_downloads.remove(file_name)
     if len(current_downloads) == 1 and shutdown:
         os.system('shutdown -s')
-    downloads_list.destroy()
-    downloads_list = tk.OptionMenu(root, downloads, *current_downloads)
-    downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
-    downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    downloads_list.grid(row=91, column=0, sticky="w", padx=13)
+    if not c_menu:
+        downloads_list.destroy()
+        downloads_list = tk.OptionMenu(root, downloads, *current_downloads)
+        downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
+        downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        downloads_list.grid(row=91, column=0, sticky="w", padx=13)
     if pending_queue:
         pending_queue[0].start()
         pending_queue.pop(0)
@@ -285,11 +285,12 @@ def download(link, file_name):
     current_downloads.remove(file_name)
     if len(current_downloads) == 1 and shutdown:
         os.system('shutdown -s')
-    downloads_list.destroy()
-    downloads_list = tk.OptionMenu(root, downloads, *current_downloads)
-    downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
-    downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    downloads_list.grid(row=91, column=0, sticky="w", padx=13)
+    if not c_menu:
+        downloads_list.destroy()
+        downloads_list = tk.OptionMenu(root, downloads, *current_downloads)
+        downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
+        downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        downloads_list.grid(row=91, column=0, sticky="w", padx=13)
     if pending_queue:
         pending_queue[0].start()
         pending_queue.pop(0)
@@ -326,14 +327,12 @@ def get_titles_dict():
     try:
         html_response = urllib.request.urlopen("https://aniworld.to/animes")
         soup = BeautifulSoup(html_response, "html.parser")
-        matching_li_elements = str(soup.find_all("li", {"a data-alternative-title": ""})).split("</a></li>, <li><a ")
-        num = 0
+        matching_li_elements = str(soup.find_all("li")).split("</a></li>, <li><a ")
         index_list = []
         for i in matching_li_elements:
             if "data-alternative-title" not in i:
-                index_list.append(num)
-            num += 1
-        index_list.sort(reverse=True)
+                index_list.append(matching_li_elements.index(i))
+        index_list = sorted(index_list, reverse=True)
         for i in index_list:
             matching_li_elements.pop(i)
         title_link_dict = {}
@@ -387,8 +386,9 @@ active_queue_checker = False
 types = ["Episodes", "Movies"]
 shutdown = False
 languages = ["German", "Ger-Sub", "Eng-Sub"]
+c_menu = 0
 
-version = 1.20
+version = 1.25
 latest_version, network_status = get_latest_version()
 titles_dict = get_titles_dict()
 root = tk.Tk()
@@ -529,22 +529,37 @@ def get_season(url_path):
     counter_seasons = 1
     html_page = urllib.request.urlopen(url_path, timeout=50)
     soup = BeautifulSoup(html_page, features="html.parser")
-    for link in soup.findAll('a'):
-        seasons = str(link.get("href"))
-        if "/staffel-{}".format(counter_seasons) in seasons:
-            counter_seasons = counter_seasons + 1
+    if "bs.to" in url_path:
+        for li in soup.findAll("li"):
+            season = str(li.get("class"))
+            if f"s{counter_seasons}" in season:
+                counter_seasons += 1
+    else:
+        for link in soup.find_all('a'):
+            seasons = str(link.get("href"))
+            if "/staffel-{}".format(counter_seasons) in seasons:
+                counter_seasons = counter_seasons + 1
     return counter_seasons - 1
 
 
 def get_episodes(url_path, season_count):
-    url = "{}staffel-{}/".format(url_path, season_count)
     episode_count = 1
-    html_page = urllib.request.urlopen(url, timeout=50)
-    soup = BeautifulSoup(html_page, features="html.parser")
-    for link in soup.findAll('a'):
-        episode = str(link.get("href"))
-        if "/staffel-{}/episode-{}".format(season_count, episode_count) in episode:
-            episode_count = episode_count + 1
+    if "bs.to" in url_path:
+        url = f"{url_path}{season_count}/"
+        html_page = urllib.request.urlopen(url, timeout=50)
+        soup = BeautifulSoup(html_page, features="html.parser")
+        for link in soup.findAll("a"):
+            href = str(link.get("href"))
+            if f"{season_count}/{episode_count}" in href:
+                episode_count += 1
+    else:
+        url = "{}staffel-{}/".format(url_path, season_count)
+        html_page = urllib.request.urlopen(url, timeout=50)
+        soup = BeautifulSoup(html_page, features="html.parser")
+        for link in soup.find_all('a'):
+            episode = str(link.get("href"))
+            if "/staffel-{}/episode-{}".format(season_count, episode_count) in episode:
+                episode_count = episode_count + 1
     return episode_count - 1
 
 
@@ -693,14 +708,17 @@ def create_new_download_thread(url, file_name, provider) -> Thread:
     if provider in ["Vidoza", "Streamtape"]:
         t = Thread(target=download, args=(url, file_name))
         if len(current_downloads) < 10:
+            logger.loading("Provider {} - File {} added to queue.".format(provider, file_name))
             t.start()
+        else:
+            return t
     elif provider == "VOE":
         t = Thread(target=download_and_convert_hls_stream, args=(url, file_name))
         if len(current_downloads) < 10:
+            logger.loading("Provider {} - File {} added to queue.".format(provider, file_name))
             t.start()
-    logger.loading("Provider {} - File {} added to queue.".format(provider, file_name))
-    if len(current_downloads) >= 10:
-        return t
+        else:
+            return t
 
 
 def create_download_thread():
@@ -794,6 +812,8 @@ def build_menu_2(title):
     global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu, movie_start_menu, movie_end_menu
     global season_start, season_end, episode_start, episode_end, movie_start, movie_end
     global providerv, language_prio_1, language_prio_2, language_prio_3
+    global c_menu
+    c_menu = 1
     name_label.destroy()
     link_entry.destroy()
     confirm_button.destroy()
@@ -910,12 +930,14 @@ def build_menu_2(title):
     create_thread_button.grid(row=150, column=0)
 
 
-def build_menu(*args):  # ERROR/LAG HERE WHEN/AFTER BUILDING SCREEN DOENST UPDATE TILL DOWNLOADS < 10
+def build_menu(*args):
     global link_entry, confirm_button, downloads_list, name_label, downloads, update_button, type_menu, type_label, typev
     global shutdown_button, create_thread_button, return_button, website_button
     global provider_menu, language_menu_1, language_menu_2, language_menu_3, language_menu_4
     global series_name_label, start_label, end_label, provider_label, options_label, language_label
     global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu, movie_start_menu, movie_end_menu
+    global c_menu
+    c_menu = 0
     if args:
         if "Episodes" in args:
             season_start_menu.destroy()
