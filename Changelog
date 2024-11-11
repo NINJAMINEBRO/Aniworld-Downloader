@@ -1,3 +1,8 @@
+1.25
+fixed Only 9 episodes would be downloaded
+fixed Seachbar would not appear
+fixed current downloads menu appearing in 2nd menu
+
 1.20
 added search feature, returns all titles that have userinput in them
 added to long link detection, deletes everything after name/
