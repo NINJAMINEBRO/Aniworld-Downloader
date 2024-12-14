@@ -1,4 +1,6 @@
 1.30 NOT RELEASED
+added new provider Doodstream
+changed provider priority
 fixed provider would not change after failed download start
 fixed cache url being 0 and trying to download
 
