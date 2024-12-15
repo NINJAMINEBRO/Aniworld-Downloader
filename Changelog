@@ -7,6 +7,7 @@ changed Ffmpeg Warning to include Vidmoly, Doodstream and Speedfiles
 fixed provider would not change after failed download start
 fixed cache url being 0 and trying to download
 fixed VOE provider not working
+fixed only 1 movie at the time being downloadable
 
 1.25
 fixed Only 9 episodes would be downloaded
