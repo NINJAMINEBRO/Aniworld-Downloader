@@ -3,7 +3,7 @@ added new provider Doodstream
 added new provider Vidmoly (best provider at the moment)
 added new provider SpeedFiles
 changed provider priority
-changed Ffmpeg Warning to include Vidmoly, Doodstream and Speedfiles
+changed Ffmpeg Warning to Universal program Warning
 fixed provider would not change after failed download start
 fixed cache url being 0 and trying to download
 fixed VOE provider not working
