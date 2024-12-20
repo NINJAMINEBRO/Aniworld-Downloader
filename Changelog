@@ -1,0 +1,14 @@
+1.30
+added bs.to support (BETA)
+added English support (for bs.to)
+added provider Doodstream
+added provider Vidmoly (best provider at the moment)
+added provider Speedfiles
+changed ffmpeg warning to be universal
+fixed voe provider
+fixed provider priority not working
+fixed error with cache url
+fixed confirm button being pressable with exsample input
+lost other changes due to the force command 
+
+other versions got deleted because of a force command
