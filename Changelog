@@ -13,6 +13,7 @@ changed ffmpeg warning to be universal
 fixed voe provider
 fixed provider priority not working
 fixed error with cache url
+fixed if voe server is in maintanace download would get stuck
 fixed confirm button being pressable with exsample input
 lost other changes due to the force command 
 
