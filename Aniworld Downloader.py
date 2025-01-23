@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 from os import getcwd, path, remove, system, rename, startfile, listdir, mkdir
 from re import compile
 from threading import Thread
-from time import time
+from time import time, sleep
 import subprocess
 from zipfile import ZipFile
 from io import BytesIO
@@ -251,6 +251,8 @@ def find_content_url(url, provider):
             content_link = match.group("url")
             if content_link is None:
                 print(f"{Fore.YELLOW}Failed to find the video link of provider Vidmoly{Style.RESET_ALL}")
+            else:
+                sleep(2)
         elif provider == "SpeedFiles":
             match = SPEEDFILES_PATTERN.search(decoded_html)
             if match is None:
@@ -331,9 +333,9 @@ def get_latest_version():  # get latest version
     return lines, network
 
 
-def get_titles_dict():
+def get_titles_dict(url):  # for aniworld and streamseries
     try:
-        html_response = urlopen("https://aniworld.to/animes")
+        html_response = urlopen(url)
         soup = BeautifulSoup(html_response, "html.parser")
         matching_li_elements = str(soup.find_all("li")).split("</a></li>, <li><a ")
         index_list = []
@@ -351,7 +353,27 @@ def get_titles_dict():
         return title_link_dict
     except Exception as e:
         if "urlopen error" in str(e):
-            print(f"{Fore.RED}Disabled Searchbar{Style.RESET_ALL}")
+            print(f"{Fore.RED}Disabled {url[8:url.index(".to")+3]} Searchbar{Style.RESET_ALL}")
+        return {}
+
+
+def get_titles_dict_2(url):  # for burningseries
+    try:
+        html_response = urlopen(url)
+        soup = BeautifulSoup(html_response, "html.parser")
+        title_link_dict = {}
+        matching_li_elements = str(soup.find_all("ul")).split("</a></li>\n<li><a ")
+        del matching_li_elements[:31]
+        matching_li_elements[0] = matching_li_elements[0][91:]
+        del matching_li_elements[-4:]
+        matching_li_elements[-1] = matching_li_elements[-1][:87]
+        for i in matching_li_elements:
+            title_link_dict.update({i[i.index('title=')+7:]: i[i.index('href="')+12: i.index('" title')]})
+        return title_link_dict
+    except Exception as e:
+        print(str(e))
+        if "urlopen error" in str(e):
+            print(f"{Fore.RED}Disabled {url[8:url.index(".to") + 3]} Searchbar{Style.RESET_ALL}")
         return {}
 
 
@@ -375,6 +397,24 @@ if "Aniworld Downloader by NMB old.exe" in listdir(getcwd()):
     except Exception as e:
         print(f"{Fore.YELLOW}could not remove old version\n{e}{Style.RESET_ALL}")
 
+try:
+    if "aniworld settings.txt" not in listdir():
+        with open("aniworld settings.txt", "w") as s:
+            s.write("Searchbars:\naniworld.to: 1\ns.to: 0\nbs.to: 0")
+
+    with open("aniworld settings.txt", "r") as s:
+        text = s.read()
+        text = text.split("\n")
+        searchbar_aniworld = int(text[1][-1])
+        searchbar_sto = int(text[2][-1])
+        searchbar_bsto = int(text[3][-1])
+except Exception as e:
+    print("There was an error while reading the settings file")
+    print("ERROR: " + str(e))
+    searchbar_aniworld = 1
+    searchbar_sto = 0
+    searchbar_bsto = 0
+
 provider_priority = ["Vidmoly", "VOE", "SpeedFiles", "Vidoza", "Doodstream", "Streamtape"]
 
 bg = "#121C22"
@@ -391,9 +431,20 @@ shutdown = False
 languages = ["German", "Ger-Sub", "Eng-Sub", "English"]
 c_menu = 0
 
-version = 1.3
+version = 1.35
 latest_version, network_status = get_latest_version()
-titles_dict = get_titles_dict()
+if searchbar_aniworld:
+    aniworld_titles_dict = get_titles_dict("https://aniworld.to/animes")
+else:
+    aniworld_titles_dict = {}
+if searchbar_sto:
+    sto_titles_dict = get_titles_dict("https://s.to/serien")
+else:
+    sto_titles_dict = {}
+if searchbar_bsto:
+    bsto_titles_dict = get_titles_dict_2("https://bs.to/andere-serien")
+else:
+    bsto_titles_dict = {}
 root = tk.Tk()
 root.title("Aniworld Downloader by NMB")
 root.configure(bg=bg)
@@ -428,6 +479,25 @@ def focus_out():
         root.focus()
 
 
+def sort_titles_dicts(sel_dict, site, text):
+    valid_titles = []
+    better_sorted_list = []
+    secondary_sorted_list = []
+    third_sorted_list = []
+    for i in sel_dict.keys():
+        if text in i.lower():
+            valid_titles.append(sel_dict.get(i))
+    for i in valid_titles:
+        if text.replace(" ", "-") in i:
+            if i.index(text.replace(" ", "-")) == 0:
+                better_sorted_list.append(i + site)
+            else:
+                secondary_sorted_list.append(i + site)
+        else:
+            third_sorted_list.append(i + site)
+    return better_sorted_list, secondary_sorted_list, third_sorted_list
+
+
 def get_event(event):
     input_handler(event, link_entry)
 
@@ -440,22 +510,23 @@ def input_handler(event, entry):
         text = text[:-1]
     else:
         text += event.char
-    valid_titles = []
-    better_sorted_list = []
-    secondary_sorted_list = []
-    third_sorted_list = []
-    for i in titles_dict.keys():
-        if text in i.lower():
-            valid_titles.append(titles_dict.get(i))
-    for i in valid_titles:
-        if text.replace(" ", "-") in i:
-            if i.index(text.replace(" ", "-")) == 0:
-                better_sorted_list.append(i)
-            else:
-                secondary_sorted_list.append(i)
-        else:
-            third_sorted_list.append(i)
-    better_sorted_list += secondary_sorted_list + third_sorted_list
+
+    aniworld_better_sorted_list, aniworld_secondary_sorted_list, aniworld_third_sorted_list = [], [], []
+    sto_better_sorted_list, sto_secondary_sorted_list, sto_third_sorted_list = [], [], []
+    bsto_better_sorted_list, bsto_secondary_sorted_list, bsto_third_sorted_list = [], [], []
+    if searchbar_aniworld:
+        aniworld_better_sorted_list, aniworld_secondary_sorted_list, aniworld_third_sorted_list = sort_titles_dicts(aniworld_titles_dict, " Aniworld", text)
+    if searchbar_sto:
+        sto_better_sorted_list, sto_secondary_sorted_list, sto_third_sorted_list = sort_titles_dicts(sto_titles_dict, " s.to", text)
+    if searchbar_bsto:
+        bsto_better_sorted_list, bsto_secondary_sorted_list, bsto_third_sorted_list = sort_titles_dicts(bsto_titles_dict, " bs.to", text)
+    best_sorted = aniworld_better_sorted_list + sto_better_sorted_list + bsto_better_sorted_list
+    secondary_sorted = aniworld_secondary_sorted_list + sto_secondary_sorted_list + bsto_secondary_sorted_list
+    third_sorted = aniworld_third_sorted_list + sto_third_sorted_list + bsto_third_sorted_list
+    best_sorted.sort()
+    secondary_sorted.sort()
+    third_sorted.sort()
+    better_sorted_list = best_sorted + secondary_sorted + third_sorted
     try:
         filtered_anime_list.destroy()
     except Exception as e:
@@ -463,8 +534,7 @@ def input_handler(event, entry):
     if better_sorted_list and text:
         filtered_anime = tk.StringVar()
         filtered_anime.set("Searchbar")
-        filtered_anime_list = tk.OptionMenu(root, filtered_anime, *better_sorted_list,
-                                            command=lambda x: set_anime(filtered_anime, entry))
+        filtered_anime_list = tk.OptionMenu(root, filtered_anime, *better_sorted_list, command=lambda x: set_anime(filtered_anime, entry))
         filtered_anime_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
         filtered_anime_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
         filtered_anime_list.place(x=14, y=10)
@@ -472,7 +542,12 @@ def input_handler(event, entry):
 
 def set_anime(anime, entry):
     entry.delete(0, "end")
-    entry.insert(0, "https://aniworld.to/anime/stream/" + anime.get())
+    if " Aniworld" in anime.get():
+        entry.insert(0, "https://aniworld.to/anime/stream/" + anime.get().replace(" Aniworld", ""))
+    elif " s.to" in anime.get():
+        entry.insert(0, "https://s.to/serie/stream/" + anime.get().replace(" s.to", ""))
+    elif " bs.to" in anime.get():
+        entry.insert(0, "https://bs.to/serie/" + anime.get().replace(" bs.to", ""))
     filtered_anime_list.destroy()
 
 
