@@ -1,6 +1,7 @@
 1.35
 added "aniworld settings.txt" for enable/disable searchbar (disable increases startup)
 added "s.to" to the searchbar
+added "bs.to" to searchbar
 changed titles in searchbar now have their website behind their name
 
 1.30
