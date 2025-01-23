@@ -16,6 +16,19 @@ fixed provider priority not working
 fixed error with cache url
 fixed if voe server is in maintanace download would get stuck
 fixed confirm button being pressable with exsample input
-lost other changes due to the force command 
+lost other changes due to the force command
 
 other versions got deleted because of a force command
+
+Itch dev log Backups:
+ver 1.20
+added search feature, returns all titles that have userinput in them
+added to long link detection, deletes everything after name/
+added example link in link entry
+added website button, on press takes opens webbrowser with aniworld itch page
+
+ver 1.10
+added No Network Connection Warning
+changed simultaneous downloads to a maximum of 10
+fixed old version not getting deleted when updating
+fixed downloads crashing when downloading too many episodes simultaneous
