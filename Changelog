@@ -2,7 +2,10 @@
 added "aniworld settings.txt" for enable/disable searchbar (disable increases startup)
 added "s.to" to the searchbar
 added "bs.to" to searchbar
+changed failed downloads now automatically try to download again
 changed titles in searchbar now have their website behind their name
+changed downloads with "vidmoly" now have a 2sec cooldown (enables downloads bigger than 2)
+fixed current downloads appearing in second menu
 
 1.30
 added bs.to support (BETA)
