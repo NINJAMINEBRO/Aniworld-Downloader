@@ -6,6 +6,7 @@ changed failed downloads now automatically try to download again
 changed titles in searchbar now have their website behind their name
 changed downloads with "vidmoly" now have a 2sec cooldown (enables downloads bigger than 2)
 fixed current downloads appearing in second menu
+fixed downloading already downloaded episodes creating series of erros
 
 1.30
 added bs.to support (BETA)
