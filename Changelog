@@ -21,8 +21,6 @@ fixed if voe server is in maintanace download would get stuck
 fixed confirm button being pressable with exsample input
 lost other changes due to the force command
 
-other versions got deleted because of a force command
-
 Itch dev log Backups:
 ver 1.20
 added search feature, returns all titles that have userinput in them
