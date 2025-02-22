@@ -297,22 +297,29 @@ def download_episode(url, file_name, provider):
             ffmpeg_cmd.insert(1, "-headers")
         subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         print(f"{Fore.LIGHTGREEN_EX}Finished download of {file_name}{Style.RESET_ALL}")
+        current_downloads.remove(file_name)
     except subprocess.CalledProcessError as e:
         remove(file_name) if path.exists(file_name) else None
         print(f"{Fore.RED}{str(e)}{Style.RESET_ALL}")
-        print(f"{Fore.RED}Could not download {file_name}. Please manually download it later{Style.RESET_ALL}")
-    current_downloads.remove(file_name)
-    if len(current_downloads) == 1 and shutdown:
-        system('shutdown -s')
+        print(f"{Fore.RED}Error while downloading {file_name}. Retrying...{Style.RESET_ALL}")
+        current_downloads.remove(file_name)
+        r_t = create_new_download_thread(url, file_name, provider)
+        if r_t is not None:
+            pending_queue.append(r_t)
     if not c_menu:
-        downloads_list.destroy()
-        downloads_list = tk.OptionMenu(root, downloads, *current_downloads)
-        downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
-        downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-        downloads_list.grid(row=91, column=0, sticky="w", padx=13)
+        update_option_menu(downloads_list)
     if pending_queue:
         pending_queue[0].start()
         pending_queue.pop(0)
+    if len(current_downloads) == 1 and shutdown:
+        system('shutdown -s')
+
+
+def update_option_menu(menu):
+    menu = menu["menu"]
+    menu.delete(0, "end")
+    for download in current_downloads:
+        menu.add_command(label=download)
 
 
 def get_latest_version():  # get latest version
@@ -431,7 +438,7 @@ shutdown = False
 languages = ["German", "Ger-Sub", "Eng-Sub", "English"]
 c_menu = 0
 
-version = 1.35
+version = 1.31
 latest_version, network_status = get_latest_version()
 if searchbar_aniworld:
     aniworld_titles_dict = get_titles_dict("https://aniworld.to/animes")
@@ -505,11 +512,12 @@ def get_event(event):
 def input_handler(event, entry):
     key = event.keycode
     global filtered_anime_list
-    text = entry.get().lower()
+    text = entry.get()
     if key == 8:
         text = text[:-1]
     else:
         text += event.char
+    text = text.lower()
 
     aniworld_better_sorted_list, aniworld_secondary_sorted_list, aniworld_third_sorted_list = [], [], []
     sto_better_sorted_list, sto_secondary_sorted_list, sto_third_sorted_list = [], [], []
@@ -876,8 +884,7 @@ def check_create_download(file_name, provider, cache_url):
         r_t = create_new_download_thread(cache_url, file_name, provider)
         if r_t is not None:
             pending_queue.append(r_t)
-        trys = len(languages)
-    return trys
+    return len(languages)
 
 
 def build_menu_2(title):
