@@ -1,3 +1,6 @@
+1.32
+changed message "English is not supported on aniworld Language will be set to Eng-Sub" wont appear when downloading from s.to
+
 1.31
 added "aniworld settings.txt" for enable/disable searchbar (disable increases startup)
 added "s.to" to the searchbar
