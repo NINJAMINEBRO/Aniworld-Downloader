@@ -1,6 +1,9 @@
 1.32
+improved switching between menus is now faster
+cleaned codebase from a few unnecessary global statements
 changed message "English is not supported on aniworld Language will be set to Eng-Sub" wont appear when downloading from s.to
 fixed voe crashing the program on some episodes
+fixed finding cache url would only be tried 3 times overall
 
 1.31
 added "aniworld settings.txt" for enable/disable searchbar (disable increases startup)
