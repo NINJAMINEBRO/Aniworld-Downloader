@@ -1,6 +1,7 @@
 1.32
 added settings menu
 improved switching between menus is now faster
+improved searchbar sorting (now treating uppercase and lowercase the same)
 cleaned codebase from a few unnecessary global statements
 changed moved settings.txt into exe itself
 changed switched "File not downloaded. Downloading: ..." and "Provider X - File ... added to queue"
