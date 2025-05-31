@@ -2,7 +2,8 @@ import tkinter as tk
 from urllib.request import Request as Rqst, urlopen
 from bs4 import BeautifulSoup
 from os import getcwd, path, remove, system, rename, startfile, listdir, mkdir
-from re import compile
+import sys
+from re import compile, search, DOTALL, match
 from threading import Thread
 from time import time, sleep
 import subprocess
@@ -12,18 +13,14 @@ from webbrowser import open as webopen
 from urllib.parse import urlsplit, urlunsplit
 from random import choices
 from string import ascii_letters, digits
-from selenium import webdriver
 from seleniumbase import SB
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait as WDW
-from selenium.webdriver.chrome.service import Service as ChromeService
 from base64 import b64decode
+import json
 from colorama import Fore, Style
 
 VOE_PATTERNS = [compile(r"'hls': '(?P<url>.+)'"),
-                compile(r'prompt\("Node",\s*"(?P<url>[^"]+)"')]
+                compile(r'prompt\("Node",\s*"(?P<url>[^"]+)"'),
+                compile(r"window\.location\.href = '(?P<url>[^']+)'")]
 STREAMTAPE_PATTERN = compile(r'get_video\?id=[^&\'\s]+&expires=[^&\'\s]+&ip=[^&\'\s]+&token=[^&\'\s]+\'')
 DOODSTREAM_PATTERN = compile(r"/pass_md5/[\w-]+/(?P<token>[\w-]+)")
 VIDMOLY_PATTERN = compile(r"sources: \[{file:\"(?P<url>.*?)\"}]")
@@ -80,8 +77,6 @@ def find_bs_link_to_episode(url, provider):
             content_link = f"https://d000d.com{iframe_src}"
         elif provider in ["Streamtape", "Vidoza"]:
             content_link = sb.wait_for_element_visible('.hoster-player iframe', timeout=120).get_attribute("src")
-        else:
-            print(f"{Fore.RED}No supported hoster available for this episode{Style.RESET_ALL}")
     return content_link
 
 
@@ -123,10 +118,6 @@ def extract_lang_key_mapping(soup):
 
 
 def get_href_by_language(html_content, language, provider):
-    if language == "Eng-Sub":
-        language = "English"
-    elif language == "English":
-        print(f"{Fore.LIGHTBLUE_EX}English is not supported on aniworld\nLanguage will be set to Eng-Sub{Style.RESET_ALL}")
     soup = BeautifulSoup(html_content, "html.parser")
     lang_key_mapping = extract_lang_key_mapping(soup)
     lang_key = lang_key_mapping.get(language)
@@ -164,59 +155,93 @@ def get_bs_href_by_language(url, language, provider, season, episode):
     raise ProviderError()
 
 
-def get_voe_content_link_with_selenium(provider_url):
-    chrome_options = Options()
-    chrome_options.add_argument('--headless')
-    chrome_options.add_argument("--no-sandbox")
-    chrome_driver_path = "/usr/bin/chromedriver"
-    if path.exists(chrome_driver_path):
-        chrome_service = ChromeService(executable_path=chrome_driver_path)
-        driver = webdriver.Chrome(service=chrome_service, options=chrome_options)
-    else:
-        driver = webdriver.Chrome(options=chrome_options)
-    driver.get(provider_url)
-    decoded_html = urlopen(driver.current_url).read().decode("utf-8")
-    content_link = voe_pattern_search(decoded_html)
-    if content_link is not None:
-        driver.quit()
-        return content_link
-    try:
-        voe_play_div = WDW(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'voe-play')))
-        voe_play_div.click()
-    except Exception as e:
+def find_script_element_voenew(raw_html):
+    soup = BeautifulSoup(raw_html, features="html.parser")
+    MKGMa_pattern = r'MKGMa="(.*?)"'
+    matches = search(MKGMa_pattern, str(soup), DOTALL)
+
+    if not matches:
+        MKGMa_pattern=r'<script type="application/json">.*\[(.*?)\]</script>'
+        matches = search(MKGMa_pattern, str(soup), DOTALL)
+    if matches:
+        raw_MKGMa = matches.group(1)
+
+        def rot13_decode(s: str) -> str:
+            result = []
+            for c in s:
+                if 'A' <= c <= 'Z':
+                    result.append(chr((ord(c) - ord('A') + 13) % 26 + ord('A')))
+                elif 'a' <= c <= 'z':
+                    result.append(chr((ord(c) - ord('a') + 13) % 26 + ord('a')))
+                else:
+                    result.append(c)
+            return ''.join(result)
+
+        def shift_characters(s: str, offset: int) -> str:
+            return ''.join(chr(ord(c) - offset) for c in s)
+
         try:
-            video_in_media_provider = WDW(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, 'media-provider video source')))
-            content_link = video_in_media_provider.get_attribute('src')
+            step1 = rot13_decode(raw_MKGMa)
+            step2 = step1.replace('_', '')
+            step3 = b64decode(step2).decode('utf-8')
+            step4 = shift_characters(step3, 3)
+            step5 = step4[::-1]
+
+            decoded = b64decode(step5).decode('utf-8')
+            try:
+                parsed_json = json.loads(decoded)
+
+                if 'direct_access_url' in parsed_json:
+                    source_json = {"mp4": parsed_json['direct_access_url']}
+                elif 'source' in parsed_json:
+                    source_json = {"hls": parsed_json['source']}
+            except json.JSONDecodeError:
+                pass
+
+                mp4_match = search(r'(https?://[^\s"]+\.mp4[^\s"]*)', decoded)
+                m3u8_match = search(r'(https?://[^\s"]+\.m3u8[^\s"]*)', decoded)
+
+                if mp4_match:
+                    source_json = {"mp4": mp4_match.group(1)}
+                elif m3u8_match:
+                    source_json = {"hls": m3u8_match.group(1)}
         except Exception as e:
             pass
-    driver.quit()
-    return content_link
+        try:
+            if "mp4" in source_json:
+                link = source_json["mp4"]
+                # Check if the link is base64 encoded
+                if isinstance(link, str) and (link.startswith("eyJ") or match(r'^[A-Za-z0-9+/=]+$', link)):
+                    try:
+                        link = b64decode(link).decode("utf-8")
+                    except Exception as e:
+                        pass
 
+                # Ensure the link is a complete URL
+                if link.startswith("//"):
+                    link = "https:" + link
+                return link
 
-def voe_pattern_search(decoded_html):
-    for VOE_PATTERN in VOE_PATTERNS:
-        match = VOE_PATTERN.search(decoded_html)
-        if match is None:
-            continue
-        content_link = match.group("url")
-        if content_link_is_not_valid(content_link):
-            try:
-                content_link = b64decode(content_link).decode()
-                if content_link_is_not_valid(content_link):
-                    continue
-                return content_link
-            except Exception:
-                pass
-            continue
-        return content_link
+            elif "hls" in source_json:
+                link = source_json["hls"]
+                # Check if the link is base64 encoded
+                if isinstance(link, str) and (link.startswith("eyJ") or match(r'^[A-Za-z0-9+/=]+$', link)):
+                    try:
+                        link = b64decode(link).decode("utf-8")
+                    except Exception as e:
+                        pass
 
-
-def content_link_is_not_valid(content_link):
-    return content_link is None or not content_link.startswith("https://")
+                # Ensure the link is a complete URL
+                if link.startswith("//"):
+                    link = "https:" + link
+                return link
+        except KeyError as e:
+            pass
+    return None
 
 
 def find_content_url(url, provider):
+    global cache_url_attempts
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
     req = Rqst(url, headers=headers)
@@ -226,11 +251,32 @@ def find_content_url(url, provider):
             soup = BeautifulSoup(decoded_html, features="html.parser")
             content_link = soup.find("source").get("src")
         elif provider == "VOE":
-            content_link = voe_pattern_search(decoded_html)
-            if content_link is None:
-                content_link = get_voe_content_link_with_selenium(url)
-            if content_link_is_not_valid(content_link):
-                return 0
+            html_page = urlopen(url)
+            html_page = html_page.read().decode('utf-8')
+            ## New Version of VOE 2025-05-01
+            cache_url = find_script_element_voenew(html_page)
+            if cache_url:
+                return cache_url
+            try:
+                b64_match = search(r"var a168c='([^']+)'", html_page)
+                if b64_match:
+                    html_page = b64decode(b64_match.group(1)).decode('utf-8')[::-1]
+                    html_page = json.loads(html_page)
+                    html_page = html_page["source"]
+                    return html_page
+            except AttributeError:
+                pass
+
+            for VOE_PATTERN in VOE_PATTERNS:
+                matches = VOE_PATTERN.search(html_page)
+                if matches:
+                    if matches.group(0).startswith("window.location.href"):
+                        return find_content_url(matches.group(1), provider)
+                    cache_link = matches.group(1)
+                    cache_link = b64decode(cache_link).decode('utf-8')
+                    if cache_link and cache_link.startswith("https://"):
+                        return cache_link
+            return 0
         elif provider == "Streamtape":
             content_link = STREAMTAPE_PATTERN.search(decoded_html)
             if content_link is None:
@@ -245,19 +291,19 @@ def find_content_url(url, provider):
             response_page = urlopen(req)
             content_link = f"{response_page.read().decode('utf-8')}{''.join(choices(ascii_letters + digits, k=10))}?token={token}&expiry={int(time() * 1000)}"
         elif provider == "Vidmoly":
-            match = VIDMOLY_PATTERN.search(decoded_html)
-            if match is None:
+            matches = VIDMOLY_PATTERN.search(decoded_html)
+            if matches is None:
                 return 0
-            content_link = match.group("url")
+            content_link = matches.group("url")
             if content_link is None:
                 print(f"{Fore.YELLOW}Failed to find the video link of provider Vidmoly{Style.RESET_ALL}")
             else:
                 sleep(2)
         elif provider == "SpeedFiles":
-            match = SPEEDFILES_PATTERN.search(decoded_html)
-            if match is None:
+            matches = SPEEDFILES_PATTERN.search(decoded_html)
+            if matches is None:
                 return 0
-            content = match.group("content")
+            content = matches.group("content")
             content = b64decode(content).decode()
             content = content.swapcase()
             content = ''.join(reversed(content))
@@ -275,7 +321,7 @@ def find_content_url(url, provider):
     except AttributeError as e:
         print(f"{Fore.YELLOW}ERROR: {e}{Style.RESET_ALL}")
         print(f"{Fore.LIGHTBLUE_EX}Trying again...{Style.RESET_ALL}")
-        if cache_url_attempts < 5:
+        if cache_url_attempts < 3:
             cache_url_attempts += 1
             return find_content_url(url, provider)
         else:
@@ -285,9 +331,13 @@ def find_content_url(url, provider):
 
 
 def download_episode(url, file_name, provider):
-    global downloads_list
+    print(f"{Fore.LIGHTBLUE_EX}File not downloaded. Downloading: {file_name}{Style.RESET_ALL}")
     try:
         current_downloads.append(file_name)
+        try:
+            update_option_menu(downloads_list)
+        except Exception as e:
+            pass
         ffmpeg_cmd = ["ffmpeg", "-i", url, "-c", "copy", "-nostdin", file_name]
         if provider == "Doodstream":
             ffmpeg_cmd.insert(1, "Referer: https://d0000d.com/")
@@ -306,8 +356,7 @@ def download_episode(url, file_name, provider):
         r_t = create_new_download_thread(url, file_name, provider)
         if r_t is not None:
             pending_queue.append(r_t)
-    if not c_menu:
-        update_option_menu(downloads_list)
+    update_option_menu(downloads_list)
     if pending_queue:
         pending_queue[0].start()
         pending_queue.pop(0)
@@ -396,6 +445,27 @@ def update():
     root.destroy()
 
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = path.abspath(".")
+    return path.join(base_path, relative_path)
+
+
+def update_settings_file():
+    try:
+        with open(resource_path("aniworld settings.txt"), "w") as s:
+            s.write(f"Searchbars (These settings have high impact on startup time):\n")
+            s.write(f"aniworld.to: {searchbar_aniworld}\n")
+            s.write(f"s.to: {searchbar_sto}\n")
+            s.write(f"bs.to: {searchbar_bsto}")
+    except Exception as e:
+        print(f"{Fore.RED}Error while updating settings file: {e}{Style.RESET_ALL}")
+
+
 if "ffmpeg.exe" not in listdir(getcwd()):
     print(f"{Fore.RED}WARNING: ffmpeg is not installed or not in this folder\nThis program will not work unless ffmpeg is in the same folder as this program{Style.RESET_ALL}")
 if "Aniworld Downloader by NMB old.exe" in listdir(getcwd()):
@@ -405,11 +475,7 @@ if "Aniworld Downloader by NMB old.exe" in listdir(getcwd()):
         print(f"{Fore.YELLOW}could not remove old version\n{e}{Style.RESET_ALL}")
 
 try:
-    if "aniworld settings.txt" not in listdir():
-        with open("aniworld settings.txt", "w") as s:
-            s.write("Searchbars:\naniworld.to: 1\ns.to: 0\nbs.to: 0")
-
-    with open("aniworld settings.txt", "r") as s:
+    with open(resource_path("aniworld settings.txt"), "r") as s:
         text = s.read()
         text = text.split("\n")
         searchbar_aniworld = int(text[1][-1])
@@ -436,9 +502,10 @@ active_queue_checker = False
 types = ["Episodes", "Movies"]
 shutdown = False
 languages = ["German", "Ger-Sub", "Eng-Sub", "English"]
+providers = ["Vidmoly", "VOE", "SpeedFiles", "Vidoza", "Doodstream", "Streamtape"]
 c_menu = 0
 
-version = 1.31
+version = 1.32
 latest_version, network_status = get_latest_version()
 if searchbar_aniworld:
     aniworld_titles_dict = get_titles_dict("https://aniworld.to/animes")
@@ -495,8 +562,8 @@ def sort_titles_dicts(sel_dict, site, text):
         if text in i.lower():
             valid_titles.append(sel_dict.get(i))
     for i in valid_titles:
-        if text.replace(" ", "-") in i:
-            if i.index(text.replace(" ", "-")) == 0:
+        if text.replace(" ", "-") in i.lower():
+            if i.lower().index(text.replace(" ", "-")) == 0:
                 better_sorted_list.append(i + site)
             else:
                 secondary_sorted_list.append(i + site)
@@ -531,9 +598,9 @@ def input_handler(event, entry):
     best_sorted = aniworld_better_sorted_list + sto_better_sorted_list + bsto_better_sorted_list
     secondary_sorted = aniworld_secondary_sorted_list + sto_secondary_sorted_list + bsto_secondary_sorted_list
     third_sorted = aniworld_third_sorted_list + sto_third_sorted_list + bsto_third_sorted_list
-    best_sorted.sort()
-    secondary_sorted.sort()
-    third_sorted.sort()
+    best_sorted.sort(key=lambda v: v.lower())
+    secondary_sorted.sort(key=lambda v: v.lower())
+    third_sorted.sort(key=lambda v: v.lower())
     better_sorted_list = best_sorted + secondary_sorted + third_sorted
     try:
         filtered_anime_list.destroy()
@@ -577,9 +644,11 @@ def confirm_link(link):
             episodes = []
             for i in range(seasons):
                 episodes.append(get_episodes(link, i + 1))
-            build_menu_2(title)
+            forget_menu()
+            place_menu_2(title)
         elif movies != 0:
-            build_menu_2(title)
+            forget_menu()
+            place_menu_2(title)
         else:
             print(f"{Fore.LIGHTBLUE_EX}Anime/Series not found{Style.RESET_ALL}")
     else:
@@ -653,7 +722,7 @@ def get_episodes(url_path, season_count):
 
 
 def from_season():
-    global season_start, season_end, episode_start_menu, episode_end_menu, episode_end
+    global episode_start_menu, episode_end_menu
     from_season = int(season_start.get()[8:])
     to_season = int(season_end.get()[8:])
     if from_season > to_season:
@@ -684,7 +753,7 @@ def from_season():
 
 
 def to_season():
-    global season_start, season_end, episode_end_menu, episode_start_menu, episode_start
+    global episode_end_menu, episode_start_menu
     from_season = int(season_start.get()[8:])
     to_season = int(season_end.get()[8:])
     if from_season > to_season:
@@ -715,7 +784,6 @@ def to_season():
 
 
 def from_episode():
-    global episode_start, episode_end, season_start, season_end
     from_seasonv = season_start.get()[8:]
     to_seasonv = season_end.get()[8:]
     from_episodev = int(episode_start.get()[9:])
@@ -726,7 +794,6 @@ def from_episode():
 
 
 def to_episode():
-    global episode_start, episode_end, season_start, season_end
     from_seasonv = season_start.get()[8:]
     to_seasonv = season_end.get()[8:]
     from_episodev = int(episode_start.get()[9:])
@@ -737,7 +804,6 @@ def to_episode():
 
 
 def from_movie():
-    global movie_start, movie_end
     from_moviev = movie_start.get()[7:]
     to_moviev = movie_end.get()[7:]
     if from_moviev > to_moviev:
@@ -746,7 +812,6 @@ def from_movie():
 
 
 def to_movie():
-    global movie_start, movie_end
     from_moviev = movie_start.get()[7:]
     to_moviev = movie_end.get()[7:]
     if from_moviev > to_moviev:
@@ -765,7 +830,13 @@ def shutdown_setting():
 
 
 def return_menu():
-    build_menu("Episodes" if seasons > 0 else "Movies")
+    return_button.grid_forget()
+    forget_settings()
+    try:
+        forget_menu_2("Episodes" if seasons > 0 else "Movies")
+    except Exception as e:
+        pass
+    place_menu()
 
 
 def language_prio_set(set_b):
@@ -791,84 +862,95 @@ def language_prio_set(set_b):
 def create_new_download_thread(url, file_name, provider) -> Thread:
     t = Thread(target=download_episode, args=(url, file_name, provider))
     if len(current_downloads) <= 10:
-        print(f"{Fore.LIGHTBLUE_EX}Provider {provider} - File {file_name} added to queue{Style.RESET_ALL}")
         t.start()
     else:
         return t
 
 
 def create_download_thread():
-    global providerv, url, episodes
-    global season_start, season_end, episode_start, episode_end, movie_start, movie_end
-    trys = 0
-    limit = len(languages)
-    lang = language_prio_1.get()
-    while trys < limit:
-        try:
-            trys += 1
-            site = url[:url.index(".to/") + 3]
-            if lang == "Eng-Sub":
-                lang = "English"
-            language = lang
-            provider = providerv.get()
-            if "bs.to" in url:
-                name = url[url.index("serie/") + 6:-1]
-            else:
-                name = url[url.index("stream/") + 7:-1]
-            if name not in listdir():
-                mkdir(name)
+    stop = False
+    language_l = [language_prio_1.get(), language_prio_2.get(), language_prio_3.get(), language_prio_4.get()]
+    if not "bs.to" in url:
+        language_l[language_l.index("Eng-Sub")] = "English"
+        language_l.reverse()
+        language_l.remove("English")
+        language_l.reverse()
 
-            queue = []
-            if seasons > 0:
-                starting_season = int(season_start.get()[8:])
-                starting_episode = int(episode_start.get()[9:]) - 1
-                last_season = int(season_end.get()[8:])
-                last_episode = int(episode_end.get()[9:])
-                for i in range(last_season - starting_season + 1):
-                    if "Season " + str(starting_season + i) not in listdir(name):  # create season folder
-                        mkdir(name + "/Season " + str(starting_season + i))
-                    eps = episodes[i + starting_season - 1] - starting_episode
-                    if i + starting_season == last_season:
-                        eps -= (episodes[i + starting_season - 1] - last_episode)
-                    for x in range(eps):
-                        queue.append("S{}E{}".format(i + starting_season, x + starting_episode + 1))
-                    starting_episode = 0
-                for i in range(len(queue)):
-                    season_override = queue[i][1:queue[i].index("E")]
-                    episode_override = queue[i][queue[i].index("E") + 1:]
-                    if "bs.to" in url:
-                        link = url + "{}/{}-".format(season_override, episode_override)
-                    else:
-                        link = url + "staffel-{}/episode-{}".format(season_override, episode_override)
+    # get series name and create folder
+    site = url[:url.index(".to/") + 3]
+    provider = providerv.get()
+    if "bs.to" in url:
+        name = url[url.index("serie/") + 6:-1]
+    else:
+        name = url[url.index("stream/") + 7:-1]
+    if name not in listdir():
+        mkdir(name)
+
+    # create queue to download
+    queue = []
+    if seasons > 0:
+        starting_season = int(season_start.get()[8:])
+        starting_episode = int(episode_start.get()[9:]) - 1
+        last_season = int(season_end.get()[8:])
+        last_episode = int(episode_end.get()[9:])
+        for i in range(last_season - starting_season + 1):
+            if "Season " + str(starting_season + i) not in listdir(name):  # create season folder
+                mkdir(name + "/Season " + str(starting_season + i))
+            eps = episodes[i + starting_season - 1] - starting_episode
+            if i + starting_season == last_season:
+                eps -= (episodes[i + starting_season - 1] - last_episode)
+            for x in range(eps):
+                queue.append("S{}E{}".format(i + starting_season, x + starting_episode + 1))
+        for i in range(len(queue)):
+            season_override = queue[0][1:queue[0].index("E")]
+            episode_override = queue[0][queue[0].index("E") + 1:]
+            if "bs.to" in url:
+                link = url + "{}/{}-".format(season_override, episode_override)
+            else:
+                link = url + "staffel-{}/episode-{}".format(season_override, episode_override)
+            for language in language_l:
+                try:
                     cache_url, provider = looping_providers(provider, link, language, site, season_override, episode_override)
                     file_name = "{}/Season {}/S{}-E{}-{}.mp4".format(name, season_override, season_override, episode_override, name)
-                    trys = check_create_download(file_name, provider, cache_url)
+                    if check_create_download(file_name, provider, cache_url, language):
+                        break
+                except Exception as e:
+                    pass
+            queue.pop(0)
 
-            elif movies > 0:
-                starting_movie = int(movie_start.get()[7:])
-                last_movie = int(movie_end.get()[7:])
-                if "Movies" not in listdir(name):
-                    mkdir(name + "/Movies")
-                for i in range(last_movie - starting_movie + 1):
-                    link = url + "filme/film-{}".format(i + starting_movie)
+    elif movies > 0:
+        starting_movie = int(movie_start.get()[7:])
+        last_movie = int(movie_end.get()[7:])
+        movie_queue = [i for i in range(last_movie - starting_movie + 1)]
+        if "Movies" not in listdir(name):
+            mkdir(name + "/Movies")
+
+        for i in movie_queue:
+            link = url + "filme/film-{}".format(i + starting_movie)
+            for language in language_l:
+                try:
                     cache_url, provider = looping_providers(provider, link, language, site, 0, i + starting_movie)
                     file_name = "{}/Movies/Movie {}-{}.mp4".format(name, i + starting_movie, name)
-                    trys = check_create_download(file_name, provider, cache_url)
-        except Exception as e:
-            if trys == 1:
-                lang = language_prio_2.get()
-            elif trys == 2:
-                lang = language_prio_3.get()
-    build_menu("Episodes" if seasons > 0 else "Movies")
+                    if check_create_download(file_name, provider, cache_url, language):
+                        break
+                except Exception as e:
+                    pass
+            movie_queue.pop(0)
+
+    return_button.grid_forget()
+    forget_menu_2("Episodes" if seasons > 0 else "Movies")
+    place_menu()
 
 
 def looping_providers(provider, link, language, site, season, episode):
+    global cache_url_attempts
     local_provider_priority = provider_priority.copy()
     local_provider_priority.remove(provider)
     local_provider_priority.insert(0, provider)
     for x in local_provider_priority:
         redirect_link = get_redirect_link_by_provider(site, link, language, x, season, episode)
         if redirect_link is not None:
+            cache_url_attempts = 0
             cache_url = find_content_url(redirect_link, x)
             if cache_url:
                 provider = x
@@ -876,119 +958,254 @@ def looping_providers(provider, link, language, site, season, episode):
     return cache_url, provider
 
 
-def check_create_download(file_name, provider, cache_url):
+def check_create_download(file_name, provider, cache_url, language):
     if path.exists(file_name):
         print(f"{Fore.LIGHTBLUE_EX}Episode {file_name} already downloaded.{Style.RESET_ALL}")
-    else:
-        print(f"{Fore.LIGHTBLUE_EX}File not downloaded. Downloading: {file_name}{Style.RESET_ALL}")
+    elif cache_url:
+        print(f"{Fore.LIGHTBLUE_EX}Provider {provider} - File {file_name} added to queue{Style.RESET_ALL}")
         r_t = create_new_download_thread(cache_url, file_name, provider)
         if r_t is not None:
             pending_queue.append(r_t)
-    return len(languages)
+    else:
+        print(f"{Fore.RED}Episode {file_name} coudn't be downloaded in {language}.{Style.RESET_ALL}")
+        raise Exception("language change")
+    return True
 
 
-def build_menu_2(title):
-    global name_label, link_entry, confirm_button, downloads_list, type_menu, type_label
-    global shutdown_button, create_thread_button, return_button
-    global provider_menu, language_menu_1, language_menu_2, language_menu_3, language_menu_4
-    global series_name_label, start_label, end_label, provider_label, options_label, language_label
-    global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu, movie_start_menu, movie_end_menu
-    global season_start, season_end, episode_start, episode_end, movie_start, movie_end
-    global providerv, language_prio_1, language_prio_2, language_prio_3, language_prio_4
+def enable_disable_searchbar(name):
+    global searchbar_aniworld, searchbar_sto, searchbar_bsto
+    global aniworld_titles_dict, sto_titles_dict, bsto_titles_dict
+    if name == "Aniworld":
+        if searchbar_aniworld:
+            searchbar_aniworld = 0
+            aniworld_button["fg"] = fg
+        else:
+            searchbar_aniworld = 1
+            aniworld_button["fg"] = bg
+            if not aniworld_titles_dict:
+                aniworld_titles_dict = get_titles_dict("https://aniworld.to/animes")
+    elif name == "Sto":
+        if searchbar_sto:
+            searchbar_sto = 0
+            sto_button["fg"] = fg
+        else:
+            searchbar_sto = 1
+            sto_button["fg"] = bg
+            if not sto_titles_dict:
+                sto_titles_dict = get_titles_dict("https://s.to/serien")
+    elif name == "BSto":
+        if searchbar_bsto:
+            searchbar_bsto = 0
+            bsto_button["fg"] = fg
+        else:
+            searchbar_bsto = 1
+            bsto_button["fg"] = bg
+            if not bsto_titles_dict:
+                bsto_titles_dict = get_titles_dict_2("https://bs.to/andere-serien")
+    update_settings_file()
+
+
+def place_menu_setting():
     global c_menu
+    c_menu = 2
+    forget_menu()
+
+    return_button.grid(row=0, column=0, sticky="w")
+    searchbar_label.grid(row=1, column=0, sticky="w", padx=30)
+    aniworld_button.grid(row=2, column=0, sticky="w", padx=30)
+    sto_button.grid(row=3, column=0, sticky="w", padx=30)
+    bsto_button.grid(row=4, column=0, sticky="w", padx=30)
+
+
+def place_menu_2(title):
+    global c_menu
+    global episode_start_menu, episode_end_menu, season_start_menu, season_end_menu, movie_start_menu, movie_end_menu
     c_menu = 1
-    name_label.destroy()
-    link_entry.destroy()
-    confirm_button.destroy()
-    downloads_list.destroy()
-    type_menu.destroy()
-    type_label.destroy()
-    website_button.destroy()
-    try:
-        filtered_anime_list.destroy()
-    except Exception as e:
-        pass
-    if version < latest_version:
-        update_button.destroy()
-    series_name_label = tk.Label(root, text=title, font=("Open Sans", 30), fg=bg_2nd, bg=bg)
+
+    series_name_label.config(text=title)
     series_name_label.grid(row=0, column=0)
 
     if seasons != 0:
         seasonsv = ["Season: " + str(i + 1) for i in range(seasons)]
         episodesv = ["Episode: " + str(i + 1) for i in range(episodes[0])]
-        season_start = tk.StringVar()
         season_start.set(seasonsv[0])
-        season_end = tk.StringVar()
         season_end.set(seasonsv[0])
-        episode_start = tk.StringVar()
         episode_start.set(episodesv[0])
-        episode_end = tk.StringVar()
         episode_end.set(episodesv[-1])
 
         season_start_menu = tk.OptionMenu(root, season_start, *seasonsv, command=lambda x: from_season())
         season_start_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
         season_start_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-        season_start_menu.grid(row=30, column=0, sticky="w", padx=30)
         season_end_menu = tk.OptionMenu(root, season_end, *seasonsv, command=lambda x: to_season())
         season_end_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
         season_end_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-        season_end_menu.grid(row=30, column=0, sticky="w", padx=187)
-
         episode_start_menu = tk.OptionMenu(root, episode_start, *episodesv, command=lambda x: from_episode())
         episode_start_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
         episode_start_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-        episode_start_menu.grid(row=35, column=0, sticky="w", padx=30)
         episode_end_menu = tk.OptionMenu(root, episode_end, *episodesv, command=lambda x: to_episode())
         episode_end_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
         episode_end_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        season_start_menu.grid(row=30, column=0, sticky="w", padx=30)
+        season_end_menu.grid(row=30, column=0, sticky="w", padx=187)
+        episode_start_menu.grid(row=35, column=0, sticky="w", padx=30)
         episode_end_menu.grid(row=35, column=0, sticky="w", padx=187)
 
     elif movies != 0:
         moviesv = ["Movie: " + str(i + 1) for i in range(movies)]
-        movie_start = tk.StringVar()
         movie_start.set(moviesv[0])
-        movie_end = tk.StringVar()
         movie_end.set(moviesv[-1])
 
         movie_start_menu = tk.OptionMenu(root, movie_start, *moviesv, command=lambda x: from_movie())
         movie_start_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
         movie_start_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-        movie_start_menu.grid(row=30, column=0, sticky="w", padx=30)
         movie_end_menu = tk.OptionMenu(root, movie_end, *moviesv, command=lambda x: to_movie())
         movie_end_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=11)
         movie_end_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+        movie_start_menu.grid(row=30, column=0, sticky="w", padx=30)
         movie_end_menu.grid(row=30, column=0, sticky="w", padx=187)
 
-    start_label = tk.Label(root, text="Start from", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=11)
     start_label.grid(row=25, column=0, sticky="w", padx=30, ipadx=2)
-    end_label = tk.Label(root, text="End at", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=11)
     end_label.grid(row=25, column=0, sticky="w", padx=60 + 127, ipadx=2)
-
-    provider_label = tk.Label(root, text="Provider", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=15)
     provider_label.grid(row=25, column=0, sticky="w", padx=217 + end_label.winfo_reqwidth())
 
-    providerv = tk.StringVar()
     providerv.set("Vidmoly")
-    providers = ["Vidmoly", "VOE", "SpeedFiles", "Vidoza", "Doodstream", "Streamtape"]
+    provider_menu.grid(row=30, column=0, sticky="w", padx=217 + end_label.winfo_reqwidth())
+    options_label.grid(row=25, column=0, sticky="e", padx=200)
+    if shutdown:
+        shutdown_button["fg"] = bg
+    else:
+        shutdown_button["fg"] = fg
+    shutdown_button.grid(row=30, column=0, sticky="e", padx=200)
+    language_label.grid(row=20, column=0, sticky="e", padx=30, rowspan=6)
+    return_button.grid(row=0, column=0, sticky="w")
+
+    language_prio_1.set(languages[1])
+    language_prio_2.set(languages[0])
+    language_prio_3.set(languages[2])
+    language_prio_4.set(languages[3])
+    language_menu_1.grid(row=30, column=0, sticky="e", padx=30)
+    language_menu_2.grid(row=35, column=0, sticky="e", padx=30)
+    language_menu_3.grid(row=41, column=0, sticky="e", padx=30)
+    language_menu_4.grid(row=47, column=0, sticky="e", padx=30)
+
+    create_thread_button.grid(row=150, column=0)
+
+
+def place_menu():
+    global c_menu
+    c_menu = 0
+    link_entry.delete(0, "end")
+    link_entry.insert(0, "Link: https://aniworld.to/anime/stream/monogatari")
+    link_entry.grid(row=90, column=0, ipady=10)
+    name_label.grid(row=0, column=0)
+    type_label.grid(row=83, column=0, sticky="w", padx=13)
+    type_menu.grid(row=88, column=0, sticky="w", padx=13)
+    confirm_button.grid(row=91, column=0)
+    downloads_list.grid(row=91, column=0, sticky="w", padx=13)
+    website_button.place(x=800 - 14 - website_button.winfo_reqwidth(), y=6)
+    gear_button.place(x=800 - 14 - gear_button.winfo_reqwidth(), y=196)
+    if version < latest_version:
+        update_button.grid(row=200, column=0, sticky="w", padx=13)
+
+
+def forget_settings():
+    searchbar_label.grid_forget()
+    aniworld_button.grid_forget()
+    sto_button.grid_forget()
+    bsto_button.grid_forget()
+
+
+def forget_menu():
+    name_label.grid_forget()
+    link_entry.grid_forget()
+    confirm_button.grid_forget()
+    downloads_list.grid_forget()
+    type_menu.grid_forget()
+    type_label.grid_forget()
+    website_button.place_forget()
+    gear_button.place_forget()
+    try:
+        filtered_anime_list.destroy()
+    except Exception as e:
+        pass
+    if version < latest_version:
+        update_button.grid_forget()
+
+
+def forget_menu_2(*args):
+    if "Episodes" in args:
+        season_start_menu.destroy()
+        season_end_menu.destroy()
+        episode_start_menu.destroy()
+        episode_end_menu.destroy()
+    elif "Movies" in args:
+        movie_start_menu.destroy()
+        movie_end_menu.destroy()
+    shutdown_button.grid_forget()
+    create_thread_button.grid_forget()
+    provider_menu.grid_forget()
+    series_name_label.grid_forget()
+    start_label.grid_forget()
+    end_label.grid_forget()
+    provider_label.grid_forget()
+    options_label.grid_forget()
+    language_menu_1.grid_forget()
+    language_menu_2.grid_forget()
+    language_menu_3.grid_forget()
+    language_menu_4.grid_forget()
+    language_label.grid_forget()
+
+
+def initiate_menus():
+    global link_entry, name_label, type_label, type_menu, confirm_button, downloads_list, website_button, update_button, typev
+    global series_name_label, season_start, season_end, episode_start, episode_end
+    global movie_start, movie_end, start_label, end_label, provider_label, providerv, provider_menu
+    global options_label, shutdown_button, language_label, return_button, create_thread_button, gear_button
+    global language_prio_1, language_prio_2, language_prio_3, language_prio_4, language_menu_1, language_menu_2, language_menu_3, language_menu_4
+    global searchbar_label, aniworld_button, sto_button, bsto_button
+    # menu 1
+    link_entry = tk.Entry(root, width=70, bg=bg_2nd, fg=fg, font=("Open Sans", 15))
+    link_entry.bind("<FocusIn>", lambda x: entry_focus_in(link_entry))
+    link_entry.bind("<FocusOut>", lambda x: entry_focus_out(link_entry))
+    if network_status:
+        link_entry.bind("<Key>", get_event)
+    name_label = tk.Label(root, text="ANIWORLD DOWNLOADER", bg=bg, fg=bg_2nd, font=("Open Sans", 30))
+    type_label = tk.Label(root, text="Type", bg=bg, fg=bg_2nd, font=("Open Sans", 15), width=8)
+    typev = tk.StringVar()
+    typev.set("Episodes")
+    type_menu = tk.OptionMenu(root, typev, *types)
+    type_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=8)
+    type_menu["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+    confirm_button = tk.Button(root, text="Confirm", bg=bg_2nd, width=10, border=0, fg=fg, height=1, font=("Open Sans", 15), command=lambda: confirm_link(link_entry.get()))
+    downloads = tk.StringVar()
+    downloads.set("Current Downloads")
+    downloads_list = tk.OptionMenu(root, downloads, *current_downloads)
+    downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
+    downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+    website_button = tk.Button(root, text="Itch", bg=bg_2nd, width=9, border=0, fg=fg, height=1, font=("Open Sans", 15), command=lambda: webopen("https://ninjaminebro.itch.io/aniworld-downloader"))
+    logo_label = tk.Label(root, width=12, height=1, text="Made by NMB", bg=bg, fg="#8EA1BD", font=("Open Sans", 15))
+    update_button = tk.Button(root, text="Update", bg=bg_2nd, fg=fg, font=("Open Sans", 25), command=update)
+    logo_label.grid(row=201, column=0, sticky="w", padx=6)
+    gear_button = tk.Button(root, text="⚙", bg=bg_2nd, fg=fg, font=("Open Sans", 15), command=lambda: place_menu_setting(), border=0, pady=0, padx=0)
+    # menu 2
+    series_name_label = tk.Label(root, text="placeholder", font=("Open Sans", 30), fg=bg_2nd, bg=bg)
+    season_start = tk.StringVar()
+    season_end = tk.StringVar()
+    episode_start = tk.StringVar()
+    episode_end = tk.StringVar()
+    movie_start = tk.StringVar()
+    movie_end = tk.StringVar()
+    start_label = tk.Label(root, text="Start from", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=11)
+    end_label = tk.Label(root, text="End at", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=11)
+    provider_label = tk.Label(root, text="Provider", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=15)
+    providerv = tk.StringVar()
     provider_menu = tk.OptionMenu(root, providerv, *providers)
     provider_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=15)
     provider_menu["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    provider_menu.grid(row=30, column=0, sticky="w", padx=217 + end_label.winfo_reqwidth())
-
     options_label = tk.Label(root, text="Options", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=10)
-    options_label.grid(row=25, column=0, sticky="e", padx=200)
-
     shutdown_button = tk.Button(root, text="Shutdown", font=("Open Sans", 15), fg=fg, bg=bg_2nd, width=10, bd=False, height=1, command=lambda: shutdown_setting())
-    if shutdown:
-        shutdown_button["fg"] = bg
-    shutdown_button.grid(row=30, column=0, sticky="e", padx=200)
-
     language_label = tk.Label(root, text="Language\npriority", font=("Open Sans", 15), fg=bg_2nd, bg=bg, width=12, bd=False, height=2)
-    language_label.grid(row=20, column=0, sticky="e", padx=30, rowspan=6)
-
     return_button = tk.Button(root, text="←", font=("Open Sans", 25), fg=bg_2nd, bg=bg, width=3, bd=False, height=1, command=lambda: return_menu())
-    return_button.grid(row=0, column=0, sticky="w")
-
     language_prio_1 = tk.StringVar()
     language_prio_2 = tk.StringVar()
     language_prio_3 = tk.StringVar()
@@ -998,99 +1215,23 @@ def build_menu_2(title):
     language_menu_3 = tk.OptionMenu(root, language_prio_3, *languages, command=lambda x: language_prio_set(3))
     language_menu_4 = tk.OptionMenu(root, language_prio_4, *languages, command=lambda x: language_prio_set(4))
     language_menu_1.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=12)
-    language_menu_1["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
     language_menu_2.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=12)
-    language_menu_2["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
     language_menu_3.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=12)
-    language_menu_3["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
     language_menu_4.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=12)
+    language_menu_1["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+    language_menu_2["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
+    language_menu_3["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
     language_menu_4["menu"].configure(bg=bg_2nd, fg=fg, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    language_menu_1.grid(row=30, column=0, sticky="e", padx=30)
-    language_menu_2.grid(row=35, column=0, sticky="e", padx=30)
-    language_menu_3.grid(row=41, column=0, sticky="e", padx=30)
-    language_menu_4.grid(row=47, column=0, sticky="e", padx=30)
-    language_prio_1.set(languages[1])
-    language_prio_2.set(languages[0])
-    language_prio_3.set(languages[2])
-    language_prio_4.set(languages[3])
-
     create_thread_button = tk.Button(root, text="Start", font=("Open Sans", 15), fg=fg, bg=bg_2nd, width=17, bd=False, height=1, command=lambda: create_download_thread())
-    create_thread_button.grid(row=150, column=0)
+    # settings
+    # return button from menu 2
+    searchbar_label = tk.Label(root, text="Searchbars:", font=("Open Sans", 15), fg=bg_2nd, bg=bg)
+    aniworld_button = tk.Button(root, text="Aniworld", font=("Open Sans", 15), fg=bg if searchbar_aniworld else fg, bg=bg_2nd, width=10, bd=False, height=1, command=lambda: enable_disable_searchbar("Aniworld"))
+    sto_button = tk.Button(root, text="s.to", font=("Open Sans", 15), fg=bg if searchbar_sto else fg, bg=bg_2nd, width=10, bd=False, height=1, command=lambda: enable_disable_searchbar("Sto"))
+    bsto_button = tk.Button(root, text="Bs.to", font=("Open Sans", 15), fg=bg if searchbar_bsto else fg, bg=bg_2nd, width=10, bd=False, height=1, command=lambda: enable_disable_searchbar("BSto"))
 
 
-def build_menu(*args):
-    global link_entry, confirm_button, downloads_list, name_label, downloads, update_button, type_menu, type_label, typev
-    global shutdown_button, create_thread_button, return_button, website_button
-    global provider_menu, language_menu_1, language_menu_2, language_menu_3, language_menu_4
-    global series_name_label, start_label, end_label, provider_label, options_label, language_label
-    global season_start_menu, season_end_menu, episode_start_menu, episode_end_menu, movie_start_menu, movie_end_menu
-    global c_menu
-    c_menu = 0
-    if args:
-        if "Episodes" in args:
-            season_start_menu.destroy()
-            season_end_menu.destroy()
-            episode_start_menu.destroy()
-            episode_end_menu.destroy()
-        elif "Movies" in args:
-            movie_start_menu.destroy()
-            movie_end_menu.destroy()
-        shutdown_button.destroy()
-        create_thread_button.destroy()
-        provider_menu.destroy()
-        series_name_label.destroy()
-        start_label.destroy()
-        end_label.destroy()
-        provider_label.destroy()
-        options_label.destroy()
-        language_menu_1.destroy()
-        language_menu_2.destroy()
-        language_menu_3.destroy()
-        language_menu_4.destroy()
-        language_label.destroy()
-        return_button.destroy()
-    link_entry = tk.Entry(root, width=70, bg=bg_2nd, fg=fg, font=("Open Sans", 15))
-    link_entry.grid(row=90, column=0, ipady=10)
-    link_entry.insert(0, "Link: https://aniworld.to/anime/stream/monogatari")
-    link_entry.bind("<FocusIn>", lambda x: entry_focus_in(link_entry))
-    link_entry.bind("<FocusOut>", lambda x: entry_focus_out(link_entry))
-    if network_status:
-        link_entry.bind("<Key>", get_event)
-
-    name_label = tk.Label(root, text="ANIWORLD DOWNLOADER", bg=bg, fg=bg_2nd, font=("Open Sans", 30))
-    name_label.grid(row=0, column=0)
-
-    type_label = tk.Label(root, text="Type", bg=bg, fg=bg_2nd, font=("Open Sans", 15), width=8)
-    type_label.grid(row=83, column=0, sticky="w", padx=13)
-
-    typev = tk.StringVar()
-    typev.set("Episodes")
-    type_menu = tk.OptionMenu(root, typev, *types)
-    type_menu.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False, width=8)
-    type_menu["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    type_menu.grid(row=88, column=0, sticky="w", padx=13)
-
-    confirm_button = tk.Button(root, text="Confirm", bg=bg_2nd, width=10, border=0, fg=fg, height=1, font=("Open Sans", 15), command=lambda: confirm_link(link_entry.get()))
-    confirm_button.grid(row=91, column=0)
-
-    downloads = tk.StringVar()
-    downloads.set("Current Downloads")
-    downloads_list = tk.OptionMenu(root, downloads, *current_downloads)
-    downloads_list.configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, highlightthickness=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg_2nd, indicatoron=False)
-    downloads_list["menu"].configure(bg=bg_2nd, fg=fg, border=0, borderwidth=0, activeforeground=fg, font=("Open Sans", 15), activebackground=bg)
-    downloads_list.grid(row=91, column=0, sticky="w", padx=13)
-
-    website_button = tk.Button(root, text="Itch", bg=bg_2nd, width=9, border=0, fg=fg, height=1, font=("Open Sans", 15), command=lambda: webopen("https://ninjaminebro.itch.io/aniworld-downloader"))
-    website_button.place(x=800 - 14 - website_button.winfo_reqwidth(), y=6)
-
-    logo_label = tk.Label(root, width=12, height=1, text="Made by NMB", bg=bg, fg="#8EA1BD", font=("Open Sans", 15))
-    logo_label.grid(row=201, column=0, sticky="w", padx=6)
-
-    if version < latest_version:
-        update_button = tk.Button(root, text="Update", bg=bg_2nd, fg=fg, font=("Open Sans", 25), command=update)
-        update_button.grid(row=200, column=0, sticky="w", padx=13)
-
-
-build_menu()
+initiate_menus()
+place_menu()
 root.bind("<Button-1>", lambda x: focus_out())
 root.mainloop()
