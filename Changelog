@@ -1,3 +1,10 @@
+2.00
+changed CodeBase splited the 1 python file into multiple files for better readability
+changed DisplayName in currentDownloads to just The Season, Episode and Name of the series
+changed Provider Priority with VOE on top again
+changed language priorities are now remembered per session
+fixed settings file not working
+
 1.32
 added settings menu
 improved switching between menus is now faster
