@@ -67,6 +67,10 @@ class MenuSettings:
         self.pathLabel.grid_forget()
         self.setDownloadPathButton.grid_forget()
         self.downloadPathLabel.grid_forget()
+        self.LimitLabel.grid_forget()
+        self.decreaseLimitButton.grid_forget()
+        self.downloadLimitLabel.grid_forget()
+        self.increaseLimitButton.grid_forget()
 
     def returnMenu(self):
         self.forgetMenu()
