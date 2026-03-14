@@ -46,7 +46,7 @@ class ButtonSearchbar:
         elif "aniworld.to" == self.websiteName:
             self.settings.settings.update({"searchbarAniworld": int(self.isOn)})
 
-        self.settings.updateSettings()
+        self.settings.updateSettings("w")
 
     def getTitles(self):
         try:

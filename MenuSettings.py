@@ -83,14 +83,14 @@ class MenuSettings:
             filePath = filedialog.askdirectory()
             if filePath:
                 self.settings.settings.update({"pathDownload": filePath})
-                self.settings.updateSettings()
+                self.settings.updateSettings("w")
                 self.downloadPathLabel.configure(text=self.settings.settings.get("pathDownload"))
 
     def ChangeLimit(self, amount):
         if (self.settings.settings.get("limitDownload") + amount <= 20 and amount > 0 or
                 self.settings.settings.get("limitDownload") + amount >= 1 and amount < 0):
             self.settings.settings.update({"limitDownload": self.settings.settings.get("limitDownload") + amount})
-            self.settings.updateSettings()
+            self.settings.updateSettings("w")
             self.downloadLimitLabel.configure(text=self.settings.settings.get("limitDownload"))
             self.increaseLimitButton.grid_forget()
             self.increaseLimitButton.grid(row=6, column=0, sticky="w",

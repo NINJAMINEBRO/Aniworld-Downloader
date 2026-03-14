@@ -1,4 +1,3 @@
-import sys
 from os import path, getcwd
 from colorama import Style, Fore
 import logger
@@ -17,7 +16,7 @@ class Settings:
 
     def __init__(self):
         try:
-            with open(self.resource_path("aniworld settings.txt"), "r") as s:
+            with open("aniworld settings.txt", "r") as s:
                 text = s.read()
                 text = text.split("\n")
                 text.pop(0)  # remove info text
@@ -33,20 +32,11 @@ class Settings:
                     self.settings.update({"pathDownload": getcwd()})
                     logger.warning("The saved path does not exist -> automatically changed Download path to program path")
         except Exception as e:
-            print(f"There was an error reading the settings file\n{str(e)}")
+            logger.warning(f"There was an error reading the settings file\n{str(e)}")
 
-    def resource_path(self, relative_path):
-        """ Get absolute path to resource, works for dev and for PyInstaller """
+    def updateSettings(self, fileAction):
         try:
-            # PyInstaller creates a temp folder and stores path in _MEIPASS
-            base_path = sys._MEIPASS
-        except Exception:
-            base_path = path.abspath(".")
-        return path.join(base_path, relative_path)
-
-    def updateSettings(self):
-        try:
-            with open(self.resource_path("aniworld settings.txt"), "w") as s:
+            with open("aniworld settings.txt", fileAction) as s:
                 s.write(f"Searchbars have high impact on startup time!\n")
                 s.write(f"searchbarAniworld: {self.settings.get('searchbarAniworld')}\n")
                 s.write(f"searchbarSto: {self.settings.get('searchbarSto')}\n")
@@ -54,4 +44,7 @@ class Settings:
                 s.write(f"limitDownload: {self.settings.get('limitDownload')}\n")
                 s.write(f"pathDownload: {self.settings.get('pathDownload')}")
         except Exception as e:
-            print(f"{Fore.RED}Error while updating settings file: {e}{Style.RESET_ALL}")
+            if not path.exists("aniworld settings.txt"):
+                self.updateSettings("x")
+            else:
+                print(f"{Fore.RED}Error while updating settings file: {e}{Style.RESET_ALL}")
