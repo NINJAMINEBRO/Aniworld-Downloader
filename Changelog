@@ -1,9 +1,15 @@
-2.00
-changed CodeBase splited the 1 python file into multiple files for better readability
-changed DisplayName in currentDownloads to just The Season, Episode and Name of the series
+1.50
+added setting to change download location folder
+added setting to change simultaneous downloads
+changed CodeBase splited the 1 python file into multiple files for better readability (ik its still not very good)
+changed DisplayName in a few locations to just The Season, Episode and Name of the series
 changed Provider Priority with VOE on top again
 changed language priorities are now remembered per session
 fixed settings file not working
+fixed searchbar for s.to not working (due to an updated website)
+fixed s.to all downloads not working (due to an updated website)
+fixed movie from and to selection bugging sometimes
+fixed downloads would sometimes start in the wrong order
 
 1.32
 added settings menu
@@ -29,7 +35,7 @@ fixed current downloads appearing in second menu
 fixed downloading already downloaded episodes creating series of erros
 
 1.30
-added bs.to support
+added bs.to support (BETA)
 added English support (for bs.to)
 added provider Doodstream
 added provider Vidmoly (best provider at the moment)

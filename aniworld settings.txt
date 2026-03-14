@@ -1,0 +1,6 @@
+Searchbars have high impact on startup time!
+searchbarAniworld: 1
+searchbarSto: 0
+searchbarBsto: 0
+limitDownload: 10
+pathDownload: E:/AnimeTestFolder
