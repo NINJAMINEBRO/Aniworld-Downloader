@@ -1,3 +1,6 @@
+1.51
+implemented workaround for s.to Cloudflare throttling
+
 1.50
 added setting to change download location folder
 added setting to change simultaneous downloads
