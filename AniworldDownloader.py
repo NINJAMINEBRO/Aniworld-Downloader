@@ -84,11 +84,11 @@ class Download:
                     iframe_src = soup.find("iframe").get("src")
                     content_link = f"https://d000d.com{iframe_src}"
                 elif provider in ["Streamtape", "Vidoza"]:
-                    content_link = sb.wait_for_element_visible('.hoster-player iframe', timeout=120).get_attribute("src")
+                    content_link = sb.wait_for_element_visible('.hoster-player iframe', timeout=120).get_attribute(
+                        "src")
         except Exception as e:
             if "Chrome not found!" in str(e):
-                logger.error("To download from burning Series you need to have chrome installed")
-        print(content_link)
+                logger.error("To download from bs.to you need to have chrome installed")
         return content_link
 
     def findAndUnzipCrx(self):
@@ -177,7 +177,29 @@ class Download:
             raise LanguageError()
         raise ProviderError()
 
-    def findScriptElementVoenew(self, raw_html):
+    def GetAroundCloudflare(self, url):
+        ## super sketchy weird claudflare workaround
+        logger.info("Detected Cloudflare, downloads will be slower than usual")
+        try:
+            with SB(uc=True, headless2=True,
+                    extension_dir=self.findAndUnzipCrx()) as sb:
+                sb.open(url)
+                sb.sleep(2)
+                newPage = sb.get_page_source()
+                if '<button type="submit">Weiter</button>' in newPage:
+                    sb.wait_for_element_visible('button[type="submit"]', timeout=30)
+                    sb.click('button[type="submit"]')
+                    sb.sleep(2)
+                    newPage = sb.get_page_source()
+        except Exception as e:
+            if "Chrome not found!" in str(e):
+                logger.error("To download from s.to you need to have chrome installed")
+            else:
+                logger.error(str(e))
+
+        return newPage
+
+    def findScriptElementVoenew(self, raw_html, provider):
         soup = BeautifulSoup(raw_html, features="html.parser")
         MKGMa_pattern = r'MKGMa="(.*?)"'
         matches = search(MKGMa_pattern, str(soup), DOTALL)
@@ -259,11 +281,33 @@ class Download:
                     return link
             except KeyError as e:
                 pass
+
+        try:
+            b64_match = search(r"var a168c='([^']+)'", raw_html)
+            if b64_match:
+                html_page = b64decode(b64_match.group(1)).decode('utf-8')[::-1]
+                html_page = json.loads(html_page)
+                html_page = html_page["source"]
+                return html_page
+        except AttributeError:
+            pass
+
+        for VOE_PATTERN in VOE_PATTERNS:
+            matches = VOE_PATTERN.search(raw_html)
+            if matches:
+                if matches.group(0).startswith("window.location.href"):
+                    return self.findContentUrl(matches.group(1), provider)
+                cache_link = matches.group(1)
+                cache_link = b64decode(cache_link).decode('utf-8')
+                if cache_link and cache_link.startswith("https://"):
+                    return cache_link
+
         return None
 
     def findContentUrl(self, url, provider):
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
         req = Rqst(url, headers=headers)
         decoded_html = urlopen(req).read().decode("utf-8")
         content_link = ""
@@ -272,31 +316,15 @@ class Download:
                 soup = BeautifulSoup(decoded_html, features="html.parser")
                 content_link = soup.find("source").get("src")
             elif provider == "VOE":
-                html_page = urlopen(url)
+                sleep(1)
+                html_page = urlopen(url, timeout=10)
                 html_page = html_page.read().decode('utf-8')
                 ## New Version of VOE 2025-05-01
-                cache_url = self.findScriptElementVoenew(html_page)
+                if "cloudflare" in str(html_page):
+                    html_page = self.GetAroundCloudflare(url)
+                cache_url = self.findScriptElementVoenew(html_page, provider)
                 if cache_url:
                     return cache_url
-                try:
-                    b64_match = search(r"var a168c='([^']+)'", html_page)
-                    if b64_match:
-                        html_page = b64decode(b64_match.group(1)).decode('utf-8')[::-1]
-                        html_page = json.loads(html_page)
-                        html_page = html_page["source"]
-                        return html_page
-                except AttributeError:
-                    pass
-
-                for VOE_PATTERN in VOE_PATTERNS:
-                    matches = VOE_PATTERN.search(html_page)
-                    if matches:
-                        if matches.group(0).startswith("window.location.href"):
-                            return self.findContentUrl(matches.group(1), provider)
-                        cache_link = matches.group(1)
-                        cache_link = b64decode(cache_link).decode('utf-8')
-                        if cache_link and cache_link.startswith("https://"):
-                            return cache_link
                 return 0
             elif provider == "Streamtape":
                 content_link = STREAMTAPE_PATTERN.search(decoded_html)
@@ -319,7 +347,7 @@ class Download:
                 if content_link is None:
                     logger.warning(f"Failed to find the video link of provider Vidmoly")
                 else:
-                    sleep(2)
+                    sleep(2)  # cooldown for downloads to not get flagged as spam
             elif provider == "SpeedFiles":
                 matches = SPEEDFILES_PATTERN.search(decoded_html)
                 if matches is None:
@@ -354,11 +382,11 @@ class Download:
         displayName = displayName[displayName.index("/") + 1:]
         logger.info(f"File not downloaded. Downloading: {displayName}")
         try:
-            self.menuMain.current_downloads.append(displayName)
-            if self.menuMain.downloads_list.grid_info():
-                self.menuMain.updateOptionMenu()
+            if displayName not in self.menuMain.current_downloads:
+                self.menuMain.current_downloads.append(displayName)
 
-            ffmpeg_cmd = ["ffmpeg", "-i", url, "-c", "copy", "-nostdin", f"{self.settings.settings.get('pathDownload')}/{fileName}"]
+            ffmpeg_cmd = ["ffmpeg", "-i", url, "-c", "copy", "-nostdin",
+                          f"{self.settings.settings.get('pathDownload')}/{fileName}"]
             if provider == "Doodstream":
                 ffmpeg_cmd.insert(1, "Referer: https://d0000d.com/")
                 ffmpeg_cmd.insert(1, "-headers")
@@ -374,8 +402,6 @@ class Download:
                 f"{self.settings.settings.get('pathDownload')}/{fileName}") else None
             logger.error(f"{str(e)}")
             logger.error(f"Error while downloading {displayName}. Retrying...")
-            self.menuMain.current_downloads.remove(displayName)
-            self.menuMain.updateOptionMenu()
             self.createNewDownloadThread(url, fileName, provider)
         if self.pending_queue:
             self.pending_queue.pop(0).start()
@@ -384,7 +410,8 @@ class Download:
 
     def createNewDownloadThread(self, url, fileName, provider):
         t = Thread(target=self.downloadEpisode, args=(url, fileName, provider))
-        if len(self.pending_queue) > 0 or len(self.menuMain.current_downloads) > self.settings.settings.get("limitDownload"):
+        if len(self.pending_queue) > 0 or len(self.menuMain.current_downloads) > self.settings.settings.get(
+                "limitDownload"):
             self.pending_queue.append(t)
         else:
             t.start()
