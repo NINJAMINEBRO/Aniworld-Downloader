@@ -42,7 +42,7 @@ def checkForOldFilesAndVerifyFfmpeg():
 
 
 if __name__ == "__main__":
-    version = 1.50
+    version = 1.51
     checkForOldFilesAndVerifyFfmpeg()
     network, newestVersion = checkForUpdate()
     root = Root()
