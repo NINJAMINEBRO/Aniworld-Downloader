@@ -178,8 +178,8 @@ class Download:
         raise ProviderError()
 
     def GetAroundCloudflare(self, url):
-        ## super sketchy weird claudflare workaround
-        logger.info("Detected Cloudflare, downloads will be slower than usual")
+        ## super sketchy weird cloudflare workaround
+        logger.warning("Detected Cloudflare, downloads will be slower than usual")
         try:
             with SB(uc=True, headless2=True,
                     extension_dir=self.findAndUnzipCrx()) as sb:
@@ -317,12 +317,10 @@ class Download:
                 content_link = soup.find("source").get("src")
             elif provider == "VOE":
                 sleep(1)
-                html_page = urlopen(url, timeout=10)
-                html_page = html_page.read().decode('utf-8')
                 ## New Version of VOE 2025-05-01
-                if "cloudflare" in str(html_page):
-                    html_page = self.GetAroundCloudflare(url)
-                cache_url = self.findScriptElementVoenew(html_page, provider)
+                if "captcha" in str(decoded_html).lower():  # very poor detections, sometimes gets called without need (works most of the time)
+                    decoded_html = self.GetAroundCloudflare(url)
+                cache_url = self.findScriptElementVoenew(decoded_html, provider)
                 if cache_url:
                     return cache_url
                 return 0

@@ -1,3 +1,9 @@
+1.52
+changed Cloudflare detection text from blue (info) to orange (warning) (just for better readability)
+fixed if VOE was selected same Website would be opened 3 times (main for all providers, VOE specific unnecessary, cloudflare workaround)
+fixed Cloudflare workaround always getting called with VOE and slowing down downloads
+fixed newest version being converted wrong
+
 1.51
 implemented workaround for s.to Cloudflare throttling
 

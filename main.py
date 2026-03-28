@@ -17,7 +17,7 @@ def checkForUpdate():  # get latest version
         lines = ""
         for line in file:
             lines += line.decode("utf-8")
-        newest = float(lines[:-1])
+        newest = float(lines)
     except Exception as e:
         connection = False
         if "urlopen error" in str(e):
@@ -42,7 +42,7 @@ def checkForOldFilesAndVerifyFfmpeg():
 
 
 if __name__ == "__main__":
-    version = 1.51
+    version = 1.52
     checkForOldFilesAndVerifyFfmpeg()
     network, newestVersion = checkForUpdate()
     root = Root()
